@@ -1,0 +1,23 @@
+import type { Store } from './interfaces.js';
+import type { ChatBindingRecord } from './types.js';
+
+export class SessionRouter {
+  constructor(private readonly store: Store) {}
+
+  resolve(chatId: string, channelType: 'telegram'): ChatBindingRecord {
+    const existing = this.store.getChatBinding(chatId, channelType);
+    if (existing) return existing;
+
+    const workspaces = this.store.listEnabledWorkspaces();
+    if (workspaces.length === 0) {
+      throw new Error('No enabled workspaces configured');
+    }
+
+    return this.store.ensureChatBinding(chatId, channelType, workspaces[0].name);
+  }
+
+  setWorkspace(chatId: string, channelType: 'telegram', workspaceName: string): ChatBindingRecord {
+    this.resolve(chatId, channelType);
+    return this.store.updateChatWorkspace(chatId, channelType, workspaceName);
+  }
+}

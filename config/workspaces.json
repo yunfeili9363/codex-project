@@ -1,0 +1,11 @@
+[
+  {
+    "name": "bridge",
+    "path": "/Users/a1-6/Documents/codex project",
+    "defaultSandbox": "workspace-write",
+    "defaultModel": "",
+    "allowedAdditionalDirs": [],
+    "enabled": true,
+    "highRisk": false
+  }
+]
