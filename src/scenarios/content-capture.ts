@@ -2,7 +2,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
 import type { CaptureSourceType, ContentCaptureResult, InboundMessage, WorkspaceRecord } from '../bridge/types.js';
-import { defaultVaultRoot, displayPath, inboxFilePath } from '../vault/paths.js';
+import { defaultVaultRoot, displayPath, inboxFilePath, sourceCaptureFilePath } from '../vault/paths.js';
 import { VaultWriter } from '../vault/writer.js';
 import { fetchReadableUrlText } from '../ingestion/url-content.js';
 import { fetchVideoTranscript, type VideoTranscript } from '../ingestion/video-transcript.js';
@@ -40,6 +40,7 @@ export class ContentCaptureScenarioHandler implements ScenarioHandler {
       ? await this.tryFetchPageText(sourceUrl)
       : null;
     const prompt = buildContentCapturePrompt(intent, sourceUrl, workspace.name, inferredSourceType, videoTranscript, pageText);
+    const prefaceText = buildPrefaceText(sourceUrl, inferredSourceType, videoTranscript, pageText);
 
     return {
       scenario: this.scenario,
@@ -47,16 +48,7 @@ export class ContentCaptureScenarioHandler implements ScenarioHandler {
       sourceUrl,
       prompt,
       executionOptions: { outputSchemaPath: SCHEMA_PATH },
-      prefaceText: sourceUrl
-        ? inferredSourceType === 'video'
-          ? videoTranscript
-            ? '正在提取视频脚本并整理内容'
-            : `正在整理视频内容，暂未拿到脚本：${sourceUrl}`
-          : pageText
-            ? '正在提取网页正文并整理内容'
-            : `正在沉淀内容，来源：${sourceUrl}`
-          : `正在沉淀内容，来源：${sourceUrl}`
-        : '正在把内容沉淀到知识库',
+      prefaceText,
       completionMode: 'content_capture',
     };
   }
@@ -69,10 +61,11 @@ export class ContentCaptureScenarioHandler implements ScenarioHandler {
   }): Promise<ScenarioCompletionResult> {
     const parsed = parseCaptureResult(params.finalMessage, params.sourceUrl);
     const vaultRoot = defaultVaultRoot(params.workspace.path, params.bindingVaultRoot);
+    const fallbackPath = resolveCaptureFallbackPath(vaultRoot, parsed.title, parsed.source_type, parsed.source_url || params.sourceUrl);
     const filePath = path.resolve(
       parsed.suggested_path
         ? path.join(vaultRoot, parsed.suggested_path)
-        : inboxFilePath(vaultRoot, new Date(), parsed.title),
+        : fallbackPath,
     );
 
     const markdown = buildCaptureMarkdown(parsed);
@@ -80,11 +73,11 @@ export class ContentCaptureScenarioHandler implements ScenarioHandler {
     const prettyPath = displayPath(params.workspace.path, filePath);
 
     const userMessage = [
-      '【内容沉淀】',
+      '【内容归档】',
       parsed.title,
       parsed.summary,
-      parsed.source_type === 'video' && parsed.reusable_note_markdown ? '已附完整脚本' : '',
-      parsed.source_type !== 'video' && parsed.reusable_note_markdown ? '已附全文整理' : '',
+      parsed.source_type === 'video' && parsed.reusable_note_markdown ? '已保存完整中文脚本' : '',
+      parsed.source_type !== 'video' && parsed.reusable_note_markdown ? '已保存完整中文整理稿' : '',
       parsed.tags.length > 0 ? `标签：${parsed.tags.join(' / ')}` : '',
       `归档：${prettyPath}`,
     ].filter(Boolean).join('\n');
@@ -125,6 +118,30 @@ export class ContentCaptureScenarioHandler implements ScenarioHandler {
   }
 }
 
+function buildPrefaceText(
+  sourceUrl: string | null,
+  inferredSourceType: CaptureSourceType,
+  videoTranscript: VideoTranscript | null,
+  pageText: string | null,
+): string {
+  if (!sourceUrl) {
+    return '正在整理内容并归档到知识库';
+  }
+
+  if (inferredSourceType === 'video') {
+    if (videoTranscript) {
+      return '正在提取视频完整脚本并翻译成中文';
+    }
+    return `正在处理视频链接，先尝试提取完整脚本：${sourceUrl}`;
+  }
+
+  if (pageText) {
+    return '正在提取网页正文并整理成中文 Markdown';
+  }
+
+  return `正在处理链接内容：${sourceUrl}`;
+}
+
 function buildContentCapturePrompt(
   intent: ReturnType<typeof parseLightweightIntent>,
   sourceUrl: string | null,
@@ -133,40 +150,11 @@ function buildContentCapturePrompt(
   videoTranscript: VideoTranscript | null,
   pageText: string | null,
 ): string {
-  const urlSection = sourceUrl
-    ? [
-        '主要链接：',
-        sourceUrl,
-        '',
-        `优先将 source_type 填为：${inferredSourceType}`,
-        '',
-        isVideoUrl(sourceUrl)
-          ? videoTranscript
-            ? [
-                `已获取视频脚本，脚本语言：${videoTranscript.languageCode}`,
-                `脚本来源：${videoTranscript.source}`,
-                '请基于这份脚本工作，不要脱离脚本自行脑补内容。',
-                'reusable_note_markdown 请写成完整的中文脚本全文，尽量保留原始顺序和段落，不要只给摘要。',
-                '',
-                '视频脚本：',
-                videoTranscript.transcript,
-              ].join('\n')
-            : '这是一个视频链接，但当前没有拿到视频脚本。如果你无法直接访问视频页面、字幕、音频或转录内容，必须明确说明信息不足，不得编造标题、观点、案例、时间戳、讲者原话或结论。'
-          : pageText
-            ? [
-                '已获取网页正文。',
-                '请基于正文工作，不要只看链接标题。',
-                'reusable_note_markdown 请写成完整的中文整理稿或全文译文，尽量保留原始顺序。',
-                '',
-                '网页正文：',
-                pageText,
-              ].join('\n')
-            : '如果你无法直接访问链接内容，只能基于用户提供的上下文谨慎推断，明确避免编造细节。',
-      ].join('\n')
-    : '本次没有提供主要链接。';
+  const hasScriptSource = Boolean(videoTranscript || pageText);
+  const urlSection = buildSourceSection(sourceUrl, inferredSourceType, videoTranscript, pageText);
   const hints: string[] = [];
   if (intent.compact) {
-    hints.push('用户强调要简洁，请优先输出短摘要和最关键的信息。');
+    hints.push('用户强调要简洁，summary 保持 1 到 2 句，core_points 控制在 3 到 5 条。');
   }
   if (intent.focusKeyPoints) {
     hints.push('用户希望提炼重点，请优先把 summary 和 core_points 压清楚。');
@@ -178,19 +166,24 @@ function buildContentCapturePrompt(
     hints.push('用户想看内容选题方向，请把 content_angles 写得更实用。');
   }
   if (inferredSourceType === 'video') {
-    hints.push('这是视频内容。如果已经提供脚本，优先完整保留脚本内容，再补摘要和要点。');
+    hints.push('这是视频内容，目标是保留完整中文脚本，不是只做摘要。');
   }
   if (pageText) {
-    hints.push('这是正文提取任务，优先保留全文信息，再做中文整理。');
+    hints.push('这是网页正文提取任务，优先输出完整中文整理稿或全文译文。');
+  }
+  if (sourceUrl && !hasScriptSource) {
+    hints.push('如果没有拿到正文或脚本，必须明确写出信息不足，不得编造全文内容。');
   }
 
   return [
-    '你正在帮助用户把有价值的内容沉淀进知识库。',
+    '你正在帮助用户把链接内容归档进知识库。',
     `当前工作区：${workspaceName}`,
     '',
     '请返回符合 schema 的结构化 JSON。',
-    '只做轻量提炼和整理，不要写成长篇分析。',
-    '重点提炼：核心观点、可复用笔记、可能的内容角度。',
+    '默认使用简体中文输出。',
+    '如果已经拿到完整脚本或正文，reusable_note_markdown 必须写成完整的中文整理稿，而不是只有摘要。',
+    '允许为了可读性补充少量标题，但不要删掉核心段落，不要改变原始逻辑顺序。',
+    'summary 只写短摘要；core_points 只写少量关键点；主要正文放在 reusable_note_markdown。',
     '所有字段默认使用简体中文输出，只有链接和必要专有名词保留原文。',
     ...(hints.length > 0 ? ['', ...hints] : []),
     '',
@@ -198,6 +191,64 @@ function buildContentCapturePrompt(
     '',
     '用户输入：',
     intent.cleanText,
+  ].join('\n');
+}
+
+function buildSourceSection(
+  sourceUrl: string | null,
+  inferredSourceType: CaptureSourceType,
+  videoTranscript: VideoTranscript | null,
+  pageText: string | null,
+): string {
+  if (!sourceUrl) {
+    return '本次没有提供主要链接。';
+  }
+
+  if (inferredSourceType === 'video') {
+    if (videoTranscript) {
+      return [
+        '主要链接：',
+        sourceUrl,
+        '',
+        '优先将 source_type 填为：video',
+        `已获取视频脚本，脚本语言：${videoTranscript.languageCode}`,
+        `脚本来源：${videoTranscript.source}`,
+        '请基于这份脚本输出完整中文脚本。可以翻译、分段、补标题，但不要只给摘要。',
+        '',
+        '视频脚本：',
+        videoTranscript.transcript,
+      ].join('\n');
+    }
+
+    return [
+      '主要链接：',
+      sourceUrl,
+      '',
+      '优先将 source_type 填为：video',
+      '这是一个视频链接，但当前没有拿到脚本。你只能明确说明信息不足，不能编造视频全文。',
+    ].join('\n');
+  }
+
+  if (pageText) {
+    return [
+      '主要链接：',
+      sourceUrl,
+      '',
+      `优先将 source_type 填为：${inferredSourceType}`,
+      '已获取网页正文。',
+      '请基于正文输出完整中文整理稿或全文译文，不要只看链接标题。',
+      '',
+      '网页正文：',
+      pageText,
+    ].join('\n');
+  }
+
+  return [
+    '主要链接：',
+    sourceUrl,
+    '',
+    `优先将 source_type 填为：${inferredSourceType}`,
+    '当前没有拿到正文，请明确说明信息不足，不要编造全文内容。',
   ].join('\n');
 }
 
@@ -229,6 +280,25 @@ function inferCaptureSourceType(sourceUrl: string | null, hasExtraText: boolean)
   return hasExtraText ? 'mixed' : 'url';
 }
 
+function resolveCaptureFallbackPath(
+  vaultRoot: string,
+  title: string,
+  sourceType: CaptureSourceType,
+  sourceUrl: string | null,
+): string {
+  const now = new Date();
+  if (sourceType === 'video') {
+    return sourceCaptureFilePath(vaultRoot, now, 'video', title);
+  }
+
+  if (sourceUrl) {
+    const kind = isXUrl(sourceUrl) ? 'x' : 'web';
+    return sourceCaptureFilePath(vaultRoot, now, kind, title);
+  }
+
+  return inboxFilePath(vaultRoot, now, title);
+}
+
 function isCaptureSourceType(value: unknown): value is CaptureSourceType {
   return value === 'text' || value === 'url' || value === 'mixed' || value === 'video';
 }
@@ -243,6 +313,16 @@ function isVideoUrl(url: string): boolean {
       || host === 'vimeo.com'
       || host === 'player.vimeo.com'
       || host === 'bilibili.com';
+  } catch {
+    return false;
+  }
+}
+
+function isXUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.replace(/^www\./, '').toLowerCase();
+    return host === 'x.com' || host === 'twitter.com';
   } catch {
     return false;
   }
@@ -277,7 +357,11 @@ function buildCaptureMarkdown(result: ContentCaptureResult): string {
     lines.push('', '## 速记卡片', result.quick_card_markdown);
   }
   if (result.reusable_note_markdown) {
-    lines.push('', result.source_type === 'video' ? '## 完整脚本' : '## 可复用笔记', result.reusable_note_markdown);
+    lines.push(
+      '',
+      result.source_type === 'video' ? '## 完整中文脚本' : '## 完整中文整理稿',
+      result.reusable_note_markdown,
+    );
   }
 
   lines.push('', `<!-- capture_id:${crypto.randomUUID()} -->`);

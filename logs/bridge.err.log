@@ -1,0 +1,165 @@
+(node:99432) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+[video-transcript] caption fetch failed, falling back to whisper: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at fetchCaptionTranscript (file:///Users/a1-6/Documents/codex%20project/dist/ingestion/video-transcript.js:46:41)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async ContentCaptureScenarioHandler.fetchVideoTranscript [as transcriptFetcher] (file:///Users/a1-6/Documents/codex%20project/dist/ingestion/video-transcript.js:21:11)
+    at async ContentCaptureScenarioHandler.tryFetchTranscript (file:///Users/a1-6/Documents/codex%20project/dist/scenarios/content-capture.js:86:20)
+    at async ContentCaptureScenarioHandler.buildTaskPlan (file:///Users/a1-6/Documents/codex%20project/dist/scenarios/content-capture.js:33:15)
+    at async BridgeManager.buildScenarioTaskPlan (file:///Users/a1-6/Documents/codex%20project/dist/bridge/manager.js:544:22)
+    at async BridgeManager.processInbound (file:///Users/a1-6/Documents/codex%20project/dist/bridge/manager.js:261:26)
+(node:373) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:1064) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+[video-transcript] caption fetch failed, falling back to whisper: SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at fetchCaptionTranscript (file:///Users/a1-6/Documents/codex%20project/dist/ingestion/video-transcript.js:46:41)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async ContentCaptureScenarioHandler.fetchVideoTranscript [as transcriptFetcher] (file:///Users/a1-6/Documents/codex%20project/dist/ingestion/video-transcript.js:21:11)
+    at async ContentCaptureScenarioHandler.tryFetchTranscript (file:///Users/a1-6/Documents/codex%20project/dist/scenarios/content-capture.js:87:20)
+    at async ContentCaptureScenarioHandler.buildTaskPlan (file:///Users/a1-6/Documents/codex%20project/dist/scenarios/content-capture.js:33:15)
+    at async BridgeManager.buildScenarioTaskPlan (file:///Users/a1-6/Documents/codex%20project/dist/bridge/manager.js:547:22)
+    at async BridgeManager.processInbound (file:///Users/a1-6/Documents/codex%20project/dist/bridge/manager.js:264:26)
+[telegram-adapter] polling failed: TypeError: fetch failed
+    at node:internal/deps/undici/undici:16416:13
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async TelegramAdapter.request (file:///Users/a1-6/Documents/codex%20project/dist/telegram.js:88:26)
+    at async TelegramAdapter.send (file:///Users/a1-6/Documents/codex%20project/dist/telegram.js:46:24)
+    at async retry (file:///Users/a1-6/Documents/codex%20project/dist/bridge/delivery.js:66:20)
+    at async DeliveryLayer.send (file:///Users/a1-6/Documents/codex%20project/dist/bridge/delivery.js:14:29)
+    at async BridgeManager.startTask (file:///Users/a1-6/Documents/codex%20project/dist/bridge/manager.js:371:25)
+    at async BridgeManager.processInbound (file:///Users/a1-6/Documents/codex%20project/dist/bridge/manager.js:301:9) {
+  [cause]: Error: getaddrinfo ENOTFOUND api.telegram.org
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'api.telegram.org'
+  }
+}
+[telegram-adapter] polling failed: TypeError: fetch failed
+    at node:internal/deps/undici/undici:16416:13
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async TelegramAdapter.request (file:///Users/a1-6/Documents/codex%20project/dist/telegram.js:88:26)
+    at async TelegramAdapter.getUpdates (file:///Users/a1-6/Documents/codex%20project/dist/telegram.js:73:20)
+    at async TelegramAdapter.start (file:///Users/a1-6/Documents/codex%20project/dist/telegram.js:21:33)
+    at async BridgeManager.start (file:///Users/a1-6/Documents/codex%20project/dist/bridge/manager.js:43:9)
+    at async main (file:///Users/a1-6/Documents/codex%20project/dist/index.js:46:9) {
+  [cause]: Error: getaddrinfo ENOTFOUND api.telegram.org
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'api.telegram.org'
+  }
+}
+[telegram-adapter] polling failed: TypeError: fetch failed
+    at node:internal/deps/undici/undici:16416:13
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async TelegramAdapter.request (file:///Users/a1-6/Documents/codex%20project/dist/telegram.js:88:26)
+    at async TelegramAdapter.getUpdates (file:///Users/a1-6/Documents/codex%20project/dist/telegram.js:73:20)
+    at async TelegramAdapter.start (file:///Users/a1-6/Documents/codex%20project/dist/telegram.js:21:33)
+    at async BridgeManager.start (file:///Users/a1-6/Documents/codex%20project/dist/bridge/manager.js:43:9)
+    at async main (file:///Users/a1-6/Documents/codex%20project/dist/index.js:46:9) {
+  [cause]: Error: getaddrinfo ENOTFOUND api.telegram.org
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'api.telegram.org'
+  }
+}
+[telegram-adapter] polling failed: TypeError: fetch failed
+    at node:internal/deps/undici/undici:16416:13
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async TelegramAdapter.request (file:///Users/a1-6/Documents/codex%20project/dist/telegram.js:88:26)
+    at async TelegramAdapter.getUpdates (file:///Users/a1-6/Documents/codex%20project/dist/telegram.js:73:20)
+    at async TelegramAdapter.start (file:///Users/a1-6/Documents/codex%20project/dist/telegram.js:21:33)
+    at async BridgeManager.start (file:///Users/a1-6/Documents/codex%20project/dist/bridge/manager.js:43:9)
+    at async main (file:///Users/a1-6/Documents/codex%20project/dist/index.js:46:9) {
+  [cause]: Error: getaddrinfo ENOTFOUND api.telegram.org
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'api.telegram.org'
+  }
+}
+[telegram-adapter] polling failed: TypeError: fetch failed
+    at node:internal/deps/undici/undici:16416:13
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async TelegramAdapter.request (file:///Users/a1-6/Documents/codex%20project/dist/telegram.js:88:26)
+    at async TelegramAdapter.getUpdates (file:///Users/a1-6/Documents/codex%20project/dist/telegram.js:73:20)
+    at async TelegramAdapter.start (file:///Users/a1-6/Documents/codex%20project/dist/telegram.js:21:33)
+    at async BridgeManager.start (file:///Users/a1-6/Documents/codex%20project/dist/bridge/manager.js:43:9)
+    at async main (file:///Users/a1-6/Documents/codex%20project/dist/index.js:46:9) {
+  [cause]: Error: getaddrinfo ENOTFOUND api.telegram.org
+      at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'api.telegram.org'
+  }
+}
+[telegram-adapter] polling failed: DOMException [TimeoutError]: The operation was aborted due to timeout
+    at node:internal/deps/undici/undici:16416:13
+    at processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at runNextTicks (node:internal/process/task_queues:68:3)
+    at process.processTimers (node:internal/timers:538:9)
+    at async TelegramAdapter.request (file:///Users/a1-6/Documents/codex%20project/dist/telegram.js:88:26)
+    at async TelegramAdapter.getUpdates (file:///Users/a1-6/Documents/codex%20project/dist/telegram.js:73:20)
+    at async TelegramAdapter.start (file:///Users/a1-6/Documents/codex%20project/dist/telegram.js:21:33)
+    at async BridgeManager.start (file:///Users/a1-6/Documents/codex%20project/dist/bridge/manager.js:43:9)
+    at async main (file:///Users/a1-6/Documents/codex%20project/dist/index.js:46:9)
+[telegram-adapter] polling failed: TypeError: fetch failed
+    at node:internal/deps/undici/undici:16416:13
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async TelegramAdapter.request (file:///Users/a1-6/Documents/codex%20project/dist/telegram.js:88:26)
+    at async TelegramAdapter.getUpdates (file:///Users/a1-6/Documents/codex%20project/dist/telegram.js:73:20)
+    at async TelegramAdapter.start (file:///Users/a1-6/Documents/codex%20project/dist/telegram.js:21:33)
+    at async BridgeManager.start (file:///Users/a1-6/Documents/codex%20project/dist/bridge/manager.js:43:9)
+    at async main (file:///Users/a1-6/Documents/codex%20project/dist/index.js:46:9) {
+  [cause]: ConnectTimeoutError: Connect Timeout Error (attempted address: api.telegram.org:443, timeout: 10000ms)
+      at onConnectTimeout (node:internal/deps/undici/undici:1946:23)
+      at Immediate._onImmediate (node:internal/deps/undici/undici:1927:11)
+      at process.processImmediate (node:internal/timers:504:21) {
+    code: 'UND_ERR_CONNECT_TIMEOUT'
+  }
+}
+[telegram-adapter] polling failed: TypeError: fetch failed
+    at node:internal/deps/undici/undici:16416:13
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async TelegramAdapter.request (file:///Users/a1-6/Documents/codex%20project/dist/telegram.js:88:26)
+    at async TelegramAdapter.getUpdates (file:///Users/a1-6/Documents/codex%20project/dist/telegram.js:73:20)
+    at async TelegramAdapter.start (file:///Users/a1-6/Documents/codex%20project/dist/telegram.js:21:33)
+    at async BridgeManager.start (file:///Users/a1-6/Documents/codex%20project/dist/bridge/manager.js:43:9)
+    at async main (file:///Users/a1-6/Documents/codex%20project/dist/index.js:46:9) {
+  [cause]: ConnectTimeoutError: Connect Timeout Error (attempted address: api.telegram.org:443, timeout: 10000ms)
+      at onConnectTimeout (node:internal/deps/undici/undici:1946:23)
+      at Immediate._onImmediate (node:internal/deps/undici/undici:1927:11)
+      at process.processImmediate (node:internal/timers:504:21) {
+    code: 'UND_ERR_CONNECT_TIMEOUT'
+  }
+}
+[telegram-adapter] polling failed: TypeError: fetch failed
+    at node:internal/deps/undici/undici:16416:13
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async TelegramAdapter.request (file:///Users/a1-6/Documents/codex%20project/dist/telegram.js:88:26)
+    at async TelegramAdapter.getUpdates (file:///Users/a1-6/Documents/codex%20project/dist/telegram.js:73:20)
+    at async TelegramAdapter.start (file:///Users/a1-6/Documents/codex%20project/dist/telegram.js:21:33)
+    at async BridgeManager.start (file:///Users/a1-6/Documents/codex%20project/dist/bridge/manager.js:43:9)
+    at async main (file:///Users/a1-6/Documents/codex%20project/dist/index.js:46:9) {
+  [cause]: Error: Client network socket disconnected before secure TLS connection was established
+      at TLSSocket.onConnectEnd (node:_tls_wrap:1702:19)
+      at TLSSocket.emit (node:events:520:35)
+      at endReadableNT (node:internal/streams/readable:1701:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+    code: 'ECONNRESET',
+    path: undefined,
+    host: 'api.telegram.org',
+    port: 443,
+    localAddress: null
+  }
+}

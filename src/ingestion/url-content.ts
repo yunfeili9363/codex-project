@@ -1,7 +1,9 @@
 export async function fetchReadableUrlText(url: string): Promise<string | null> {
+  const normalizedUrl = normalizeUrlForMirror(url);
+  if (!normalizedUrl) return null;
+
   const candidates = [
-    `https://r.jina.ai/http://${url}`,
-    `https://r.jina.ai/http://${url.replace(/^https?:\/\//, '')}`,
+    `https://r.jina.ai/http://${normalizedUrl}`,
   ];
 
   for (const candidate of candidates) {
@@ -9,6 +11,8 @@ export async function fetchReadableUrlText(url: string): Promise<string | null> 
       const response = await fetch(candidate, {
         headers: {
           'user-agent': 'Mozilla/5.0',
+          'accept': 'text/plain, text/markdown;q=0.9, */*;q=0.8',
+          'x-return-format': 'markdown',
         },
       });
       if (!response.ok) continue;
@@ -22,6 +26,15 @@ export async function fetchReadableUrlText(url: string): Promise<string | null> 
   return null;
 }
 
+function normalizeUrlForMirror(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.hostname}${parsed.pathname}${parsed.search}${parsed.hash}`.replace(/^\/+/, '');
+  } catch {
+    return null;
+  }
+}
+
 function normalizeReadableText(text: string): string | null {
   const cleaned = text
     .replace(/\r/g, '')
@@ -30,5 +43,6 @@ function normalizeReadableText(text: string): string | null {
 
   if (!cleaned) return null;
   if (/^error\b/i.test(cleaned)) return null;
-  return cleaned.slice(0, 80_000);
+  if (/^(?:\{|"data":)/i.test(cleaned)) return null;
+  return cleaned.slice(0, 120_000);
 }

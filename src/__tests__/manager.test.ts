@@ -262,7 +262,7 @@ describe('bridge manager', () => {
     assert.equal(latest?.scenario, 'content_capture');
     assert.match(executor.runs.at(-1) || '', /用户希望提炼重点/);
     assert.match(executor.runs.at(-1) || '', /用户明确提到 Markdown/);
-    assert.ok(adapter.sent.some(item => item.text.includes('【内容沉淀】')));
+    assert.ok(adapter.sent.some(item => item.text.includes('【内容归档】')));
   });
 
   it('auto-routes a bare video url in generic chat to content_capture', async () => {
@@ -366,7 +366,7 @@ describe('bridge manager', () => {
     const contentItems = store.listContentItemsByChat('chat-1', 5);
     assert.equal(contentItems.length, 1);
     assert.equal(contentItems[0]?.title, 'Sample Capture');
-    assert.ok(adapter.sent.some(item => item.text.includes('【内容沉淀】')));
+    assert.ok(adapter.sent.some(item => item.text.includes('【内容归档】')));
     assert.ok(adapter.sent.some(item => item.text.includes('归档：vault/inbox/2026-03-14/sample-capture.md')));
   });
 
@@ -412,6 +412,38 @@ describe('bridge manager', () => {
 
       const contentItems = store.listContentItemsByChat('chat-1', 5);
       assert.equal(contentItems[0]?.sourceType, 'video');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('extracts webpage text for x links in content_capture', async () => {
+    const adapter = new FakeAdapter();
+    const executor = new FakeExecutor();
+    const store = createStore();
+    const manager = new BridgeManager(adapter, store, executor, new DefaultRiskEvaluator(), new Set(['chat-1']));
+    const originalFetch = globalThis.fetch;
+
+    globalThis.fetch = async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url === 'https://r.jina.ai/http://x.com/demo/status/123') {
+        assert.equal((init?.headers as Record<string, string> | undefined)?.['x-return-format'], 'markdown');
+        return new Response('Thread title\n\nHere is the full thread body in English.', { status: 200 });
+      }
+      throw new Error(`unexpected fetch url: ${url}`);
+    };
+
+    try {
+      await manager.handleInbound(inbound('/bindscenario content_capture'));
+      await manager.handleInbound(inbound('https://x.com/demo/status/123'));
+
+      const latest = store.getLatestTaskRunByChat('chat-1');
+      assert.equal(latest?.scenario, 'content_capture');
+      assert.equal(latest?.status, 'succeeded');
+      assert.match(executor.runs.at(-1) || '', /已获取网页正文/);
+      assert.match(executor.runs.at(-1) || '', /网页正文：/);
+      assert.match(executor.runs.at(-1) || '', /Here is the full thread body in English\./);
+      assert.ok(adapter.sent.some(item => item.text.includes('【内容归档】')));
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -470,7 +502,7 @@ describe('bridge manager', () => {
     assert.match(markdown, /头号重点：Record follow-up tasks/);
     assert.match(markdown, /---/);
     assert.ok(adapter.sent.some(item => item.text.includes('【今日待办】')));
-    assert.ok(adapter.sent.some(item => item.text.includes('归档：vault/todo-daily/2026-03-14.md')));
+    assert.ok(adapter.sent.some(item => item.text.includes(`归档：${path.relative(store.getWorkspace('main')!.path, filePath!).replace(/\\/g, '/')}`)));
   });
 
   it('captures a manual ai_news digest into the daily news note', async () => {
@@ -494,7 +526,7 @@ describe('bridge manager', () => {
     assert.match(markdown, /OpenAI ships a new reasoning model/);
     assert.match(markdown, /Anthropic adds safer code execution controls/);
     assert.ok(adapter.sent.some(item => item.text.includes('【AI 中文日报】')));
-    assert.ok(adapter.sent.some(item => item.text.includes('归档：vault/ai-news/2026-03-14.md')));
+    assert.ok(adapter.sent.some(item => item.text.includes(`归档：${path.relative(store.getWorkspace('main')!.path, filePath!).replace(/\\/g, '/')}`)));
   });
 
   it('schedules and runs a daily ai_news digest automatically', async () => {

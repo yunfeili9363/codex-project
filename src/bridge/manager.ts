@@ -324,6 +324,15 @@ export class BridgeManager {
       this.router.setWorkspace(message.bindingKey, message.channelType, requestedWorkspaceName);
     }
 
+    if (shouldSendPreparationAck(effectiveScenario, effectiveMessage.text || '')) {
+      await this.reply(
+        message.chatId,
+        message.topicId,
+        '已收到链接，正在提取正文或脚本。这一步可能需要一点时间。',
+        message.messageId,
+      );
+    }
+
     const taskPlan = await this.buildScenarioTaskPlan(effectiveScenario, effectiveMessage, targetWorkspace);
     if (!taskPlan) {
       await this.reply(message.chatId, message.topicId, usageText(), message.messageId);
@@ -915,6 +924,16 @@ function inferAutoScenario(text: string): ChatBindingRecord['scenario'] | null {
   } catch {}
 
   return 'content_capture';
+}
+
+function shouldSendPreparationAck(
+  scenario: ChatBindingRecord['scenario'],
+  text: string,
+): boolean {
+  if (scenario !== 'content_capture') return false;
+  const trimmed = text.trim();
+  if (!trimmed || trimmed.startsWith('/')) return false;
+  return /https?:\/\/[^\s]+/i.test(trimmed);
 }
 
 function parseDigestSchedule(text: string): { time: string } | null {
