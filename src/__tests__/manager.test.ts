@@ -17,6 +17,7 @@ class FakeAdapter implements ChannelAdapter {
   readonly channelType = 'telegram' as const;
   public sent: OutboundMessage[] = [];
   public callbackAnswers: string[] = [];
+  public resolvedVoiceTexts = new Map<string, { text: string; languageCode?: string | null }>();
 
   async start(): Promise<void> {
     throw new Error('not used');
@@ -33,6 +34,12 @@ class FakeAdapter implements ChannelAdapter {
 
   async answerCallbackQuery(_callbackQueryId: string, text?: string): Promise<void> {
     this.callbackAnswers.push(text || '');
+  }
+
+  async resolveVoiceText(message: InboundMessage): Promise<{ text: string; languageCode?: string | null } | null> {
+    const fileId = message.voiceNote?.fileId;
+    if (!fileId) return null;
+    return this.resolvedVoiceTexts.get(fileId) || null;
   }
 }
 
@@ -177,6 +184,8 @@ function inbound(text: string, overrides: Partial<InboundMessage> = {}): Inbound
     userId: overrides.userId || 'user-1',
     userDisplayName: overrides.userDisplayName,
     text,
+    inputMode: overrides.inputMode,
+    voiceNote: overrides.voiceNote,
   };
 }
 
@@ -503,6 +512,35 @@ describe('bridge manager', () => {
     assert.match(markdown, /---/);
     assert.ok(adapter.sent.some(item => item.text.includes('【今日待办】')));
     assert.ok(adapter.sent.some(item => item.text.includes(`归档：${path.relative(store.getWorkspace('main')!.path, filePath!).replace(/\\/g, '/')}`)));
+  });
+
+  it('transcribes a voice note in daily_todo before structuring the list', async () => {
+    const adapter = new FakeAdapter();
+    adapter.resolvedVoiceTexts.set('voice-1', {
+      text: '今天先把待办窗口整理好，再把海报发给 Ken，晚上复盘一下进度',
+      languageCode: 'zh',
+    });
+    const executor = new FakeExecutor();
+    const store = createStore();
+    const manager = new BridgeManager(adapter, store, executor, new DefaultRiskEvaluator(), new Set(['chat-1']));
+
+    await manager.handleInbound(inbound('/bindscenario daily_todo'));
+    await manager.handleInbound(inbound('', {
+      inputMode: 'voice',
+      voiceNote: {
+        fileId: 'voice-1',
+        mimeType: 'audio/ogg',
+        durationSeconds: 11,
+      },
+    }));
+
+    const latest = store.getLatestTaskRunByChat('chat-1');
+    assert.equal(latest?.scenario, 'daily_todo');
+    assert.equal(latest?.inputKind, 'voice');
+    assert.match(executor.runs.at(-1) || '', /这段输入来自语音转写/);
+    assert.match(executor.runs.at(-1) || '', /今天先把待办窗口整理好/);
+    assert.ok(adapter.sent.some(item => item.text.includes('已收到语音，正在转写并整理待办。')));
+    assert.ok(adapter.sent.some(item => item.text.includes('【今日待办】')));
   });
 
   it('captures a manual ai_news digest into the daily news note', async () => {

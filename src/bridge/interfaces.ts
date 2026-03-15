@@ -18,6 +18,7 @@ export interface ChannelAdapter {
   send(message: OutboundMessage): Promise<DeliveryReceipt>;
   editMessage(chatId: string, messageId: number, text: string): Promise<void>;
   answerCallbackQuery(callbackQueryId: string, text?: string): Promise<void>;
+  resolveVoiceText?(message: InboundMessage): Promise<{ text: string; languageCode?: string | null } | null>;
 }
 
 export interface ExecutionCallbacks {

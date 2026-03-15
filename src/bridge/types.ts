@@ -3,7 +3,7 @@ export type ChannelType = 'telegram';
 export type SandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access';
 export type ApprovalMode = 'untrusted' | 'on-request' | 'never';
 export type ScenarioType = 'generic' | 'content_capture' | 'daily_todo' | 'ai_news';
-export type InputKind = 'text' | 'url' | 'mixed' | 'command';
+export type InputKind = 'text' | 'url' | 'mixed' | 'command' | 'voice';
 export type CaptureSourceType = 'text' | 'url' | 'mixed' | 'video';
 
 export interface WorkspaceDefinition {
@@ -137,6 +137,12 @@ export interface InboundMessage {
   userId?: string;
   userDisplayName?: string;
   text?: string;
+  inputMode?: 'text' | 'voice';
+  voiceNote?: {
+    fileId: string;
+    mimeType?: string | null;
+    durationSeconds?: number | null;
+  };
   callbackData?: string;
   callbackQueryId?: string;
 }

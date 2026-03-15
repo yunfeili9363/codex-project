@@ -21,14 +21,15 @@ export class DailyTodoScenarioHandler implements ScenarioHandler {
     const rawText = message.text?.trim() || '';
     if (!rawText || rawText.startsWith('/')) return null;
     const intent = parseLightweightIntent(rawText);
+    const isVoice = message.inputMode === 'voice';
 
     return {
       scenario: this.scenario,
-      inputKind: 'text',
+      inputKind: isVoice ? 'voice' : 'text',
       sourceUrl: null,
-      prompt: buildDailyTodoPrompt(intent, workspace.name),
+      prompt: buildDailyTodoPrompt(intent, workspace.name, isVoice),
       executionOptions: { outputSchemaPath: SCHEMA_PATH },
-      prefaceText: '正在整理今天的计划',
+      prefaceText: isVoice ? '正在整理语音待办' : '正在整理今天的计划',
       completionMode: 'daily_todo',
     };
   }
@@ -64,7 +65,11 @@ export class DailyTodoScenarioHandler implements ScenarioHandler {
   }
 }
 
-function buildDailyTodoPrompt(intent: ReturnType<typeof parseLightweightIntent>, workspaceName: string): string {
+function buildDailyTodoPrompt(
+  intent: ReturnType<typeof parseLightweightIntent>,
+  workspaceName: string,
+  isVoice: boolean,
+): string {
   const hints: string[] = [];
   if (intent.compact) {
     hints.push('用户强调要简洁，优先提取最关键的动作项，不要展开说明。');
@@ -74,6 +79,10 @@ function buildDailyTodoPrompt(intent: ReturnType<typeof parseLightweightIntent>,
   }
   if (intent.markdown) {
     hints.push('用户明确提到 Markdown，请让 daily_note_markdown 保持简洁、可直接落盘。');
+  }
+  if (isVoice) {
+    hints.push('这段输入来自语音转写，允许你做轻微口语纠正、断句和去噪，但不要改变用户原意。');
+    hints.push('如果语音里包含时间、顺序、提醒对象、交付物，请保留下来并转成待办动作。');
   }
 
   return [
@@ -86,6 +95,7 @@ function buildDailyTodoPrompt(intent: ReturnType<typeof parseLightweightIntent>,
     '重点不是分析，而是从原句里抽取“要做什么”的关键信息。',
     '优先给出现实可落地的任务和时间块，不要空泛鼓励。',
     '如果输入不够完整，可以做合理整理，但不要编造不可能确定的细节。',
+    '保持一点智能：允许你合并重复表达、补齐明显缺失的动作主语，并识别先后顺序。',
     '必做事项最多 3 条，可选事项最多 2 条，建议时间安排最多 3 段，备注最多 2 句。',
     '最终应把最核心的待办拆成清晰短句，便于用 1、2、3 列出。',
     '所有字段默认使用简体中文输出。',

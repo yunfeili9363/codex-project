@@ -1,6 +1,10 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import type { ChannelAdapter } from './bridge/interfaces.js';
 import { buildBindingKey } from './bridge/addressing.js';
 import type { DeliveryReceipt, InboundMessage, InlineButton, OutboundMessage } from './bridge/types.js';
+import { transcribeAudioFile } from './ingestion/audio-transcript.js';
 
 interface TelegramResponse<T> {
   ok: boolean;
@@ -19,6 +23,12 @@ interface TelegramMessage {
   message_thread_id?: number;
   is_topic_message?: boolean;
   text?: string;
+  caption?: string;
+  voice?: {
+    file_id: string;
+    mime_type?: string;
+    duration?: number;
+  };
   chat: {
     id: number;
   };
@@ -38,6 +48,11 @@ interface TelegramCallbackQuery {
     first_name?: string;
   };
   message?: TelegramMessage;
+}
+
+interface TelegramFile {
+  file_id: string;
+  file_path?: string;
 }
 
 export class TelegramAdapter implements ChannelAdapter {
@@ -112,14 +127,46 @@ export class TelegramAdapter implements ChannelAdapter {
     });
   }
 
+  async resolveVoiceText(message: InboundMessage): Promise<{ text: string; languageCode?: string | null } | null> {
+    const voice = message.voiceNote;
+    if (!voice?.fileId) return null;
+
+    const remoteFile = await this.request<TelegramFile>('getFile', {
+      file_id: voice.fileId,
+    });
+    if (!remoteFile.file_path) return null;
+
+    const fileUrl = `https://api.telegram.org/file/bot${this.token}/${remoteFile.file_path}`;
+    const response = await fetch(fileUrl, {
+      headers: { 'user-agent': 'Mozilla/5.0' },
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (!response.ok) {
+      throw new Error(`Telegram file download failed: ${response.status}`);
+    }
+
+    const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'telegram-voice-'));
+    const localPath = path.join(tempDir, `voice${guessAudioExtension(remoteFile.file_path, voice.mimeType)}`);
+
+    try {
+      const buffer = Buffer.from(await response.arrayBuffer());
+      await fs.promises.writeFile(localPath, buffer);
+      const transcript = await transcribeAudioFile(localPath);
+      if (!transcript?.text) return null;
+      return transcript;
+    } finally {
+      await fs.promises.rm(tempDir, { recursive: true, force: true });
+    }
+  }
+
   private async getUpdates(): Promise<TelegramUpdate[]> {
     this.currentPollController?.abort();
     this.currentPollController = new AbortController();
     try {
       return await this.request<TelegramUpdate[]>('getUpdates', {
-      offset: this.offset,
-      timeout: this.pollTimeoutSeconds,
-      allowed_updates: ['message', 'callback_query'],
+        offset: this.offset,
+        timeout: this.pollTimeoutSeconds,
+        allowed_updates: ['message', 'callback_query'],
       }, {
         signal: this.currentPollController.signal,
         timeoutMs: (this.pollTimeoutSeconds + 10) * 1000,
@@ -177,6 +224,7 @@ function toInbound(update: TelegramUpdate): InboundMessage | null {
   if (update.message) {
     const topicId = update.message.message_thread_id ?? null;
     const rawChatId = String(update.message.chat.id);
+    const text = update.message.text || update.message.caption;
     return {
       channelType: 'telegram',
       kind: 'message',
@@ -186,7 +234,15 @@ function toInbound(update: TelegramUpdate): InboundMessage | null {
       messageId: update.message.message_id,
       userId: update.message.from ? String(update.message.from.id) : undefined,
       userDisplayName: update.message.from?.username || update.message.from?.first_name,
-      text: update.message.text,
+      text,
+      inputMode: update.message.voice ? 'voice' : 'text',
+      voiceNote: update.message.voice
+        ? {
+            fileId: update.message.voice.file_id,
+            mimeType: update.message.voice.mime_type || null,
+            durationSeconds: update.message.voice.duration ?? null,
+          }
+        : undefined,
     };
   }
 
@@ -215,4 +271,13 @@ function combineSignals(...signals: Array<AbortSignal | undefined>): AbortSignal
 
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === 'AbortError';
+}
+
+function guessAudioExtension(filePath: string, mimeType?: string | null): string {
+  const extension = path.extname(filePath).trim();
+  if (extension) return extension;
+  if (mimeType?.includes('ogg')) return '.ogg';
+  if (mimeType?.includes('mpeg')) return '.mp3';
+  if (mimeType?.includes('mp4')) return '.m4a';
+  return '.ogg';
 }

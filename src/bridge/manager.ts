@@ -161,13 +161,51 @@ export class BridgeManager {
 
     const binding = this.router.resolve(message.bindingKey, message.channelType, message.chatId, message.topicId);
     const workspace = this.resolveWorkspace(binding);
-    const text = message.text?.trim() || '';
+    let normalizedMessage = message;
+
+    if (!normalizedMessage.text?.trim() && normalizedMessage.voiceNote) {
+      if (binding.scenario !== 'daily_todo') {
+        await this.reply(
+          message.chatId,
+          message.topicId,
+          '当前只有 daily_todo 场景支持直接发送语音待办。先切到 /bindscenario daily_todo 再试。',
+          message.messageId,
+        );
+        return;
+      }
+
+      await this.reply(
+        message.chatId,
+        message.topicId,
+        '已收到语音，正在转写并整理待办。',
+        message.messageId,
+      );
+
+      const transcript = await this.adapter.resolveVoiceText?.(normalizedMessage);
+      if (!transcript?.text?.trim()) {
+        await this.reply(
+          message.chatId,
+          message.topicId,
+          '这条语音暂时没转写成功。你可以重发一次，或者直接发文字。',
+          message.messageId,
+        );
+        return;
+      }
+
+      normalizedMessage = {
+        ...normalizedMessage,
+        text: transcript.text.trim(),
+        inputMode: 'voice',
+      };
+    }
+
+    const text = normalizedMessage.text?.trim() || '';
     const shortcut = parseScenarioShortcut(text);
     const autoScenario = !shortcut && binding.scenario === 'generic' ? inferAutoScenario(text) : null;
     const effectiveScenario = shortcut?.scenario ?? autoScenario ?? binding.scenario;
     const effectiveMessage: InboundMessage = shortcut
-      ? { ...message, text: shortcut.text }
-      : message;
+      ? { ...normalizedMessage, text: shortcut.text }
+      : normalizedMessage;
 
     if (text === '/help' || text === '/start') {
       await this.reply(message.chatId, message.topicId, helpText(), message.messageId);
@@ -839,7 +877,7 @@ function usageText(): string {
     '直接发送文本、链接，或文本 + 链接',
     '',
     'daily_todo 场景：',
-    '直接发送零散计划或待办',
+    '直接发送零散计划、待办，或直接发语音',
     '',
     'ai_news 场景：',
     '使用 /digest 或 /digest 3d',
