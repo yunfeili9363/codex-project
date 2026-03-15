@@ -75,28 +75,23 @@ class FakeExecutor implements Executor {
     if (task.scenario === 'daily_todo' && options?.outputSchemaPath) {
       callbacks?.onProgress?.('structuring daily todo');
       const suffix = this.runs.length;
+      const isVoice = task.inputKind === 'voice';
       return {
         abort() {},
         done: Promise.resolve({
           threadId: `thread-${suffix}`,
           finalMessage: JSON.stringify({
-            top_priority: suffix === 1 ? 'Ship the Telegram bridge update' : 'Record follow-up tasks',
-            must_do: suffix === 1
-              ? ['Finish daily_todo scenario', 'Reply to Telegram test groups']
-              : ['Review the generated plan'],
-            optional: suffix === 1 ? ['Draft tomorrow\'s outline'] : ['Tidy the vault note'],
-            cut_if_short_on_time: suffix === 1 ? ['Draft tomorrow\'s outline'] : ['Tidy the vault note'],
-            suggested_schedule: suffix === 1
-              ? [
-                  { time_block: '09:00-10:30', task: 'Finish daily_todo scenario' },
-                  { time_block: '11:00-11:30', task: 'Reply to Telegram test groups' },
-                ]
-              : [
-                  { time_block: '15:00-15:20', task: 'Review the generated plan' },
-                ],
-            daily_note_markdown: suffix === 1
-              ? 'Focus on shipping the planning workflow first.'
-              : 'Add a short review block after lunch.',
+            todo_text: isVoice
+              ? '今天先把待办窗口整理好，再把海报发给 Ken，晚上复盘一下进度'
+              : suffix === 1
+                ? '把 Telegram bot 的 daily_todo 场景做完，并回复测试群消息'
+                : '下午补一个复盘和整理动作',
+            source_mode: isVoice ? 'voice' : 'text',
+            normalized_markdown_line: isVoice
+              ? '今天先把待办窗口整理好，再把海报发给 Ken，晚上复盘一下进度'
+              : suffix === 1
+                ? '把 Telegram bot 的 daily_todo 场景做完，并回复测试群消息'
+                : '下午补一个复盘和整理动作',
           }),
         }),
       };
@@ -488,7 +483,7 @@ describe('bridge manager', () => {
     ]);
   });
 
-  it('writes and appends daily_todo plans into the daily vault note', async () => {
+  it('writes and appends daily_todo items into the persistent todo list', async () => {
     const adapter = new FakeAdapter();
     const executor = new FakeExecutor();
     const store = createStore();
@@ -501,16 +496,17 @@ describe('bridge manager', () => {
     const latest = store.getLatestTaskRunByChat('chat-1');
     assert.equal(latest?.scenario, 'daily_todo');
     assert.equal(latest?.status, 'succeeded');
-    assert.ok(latest?.outputPath?.includes(path.join('vault', 'todo-daily')));
+    assert.ok(latest?.outputPath?.includes(path.join('vault', 'todo-list.md')));
 
     const filePath = latest?.outputPath;
     assert.ok(filePath);
     const markdown = fs.readFileSync(filePath!, 'utf8');
-    assert.match(markdown, /## 今日计划更新/g);
-    assert.match(markdown, /头号重点：Ship the Telegram bridge update/);
-    assert.match(markdown, /头号重点：Record follow-up tasks/);
-    assert.match(markdown, /---/);
-    assert.ok(adapter.sent.some(item => item.text.includes('【今日待办】')));
+    assert.match(markdown, /# 待办清单/);
+    assert.match(markdown, /1\. 把 Telegram bot 的 daily_todo 场景做完，并回复测试群消息/);
+    assert.match(markdown, /2\. 下午补一个复盘和整理动作/);
+    assert.ok(!markdown.includes('---'));
+    assert.ok(adapter.sent.some(item => item.text.includes('【待办已添加】')));
+    assert.ok(adapter.sent.some(item => item.text.includes('2、下午补一个复盘和整理动作')));
     assert.ok(adapter.sent.some(item => item.text.includes(`归档：${path.relative(store.getWorkspace('main')!.path, filePath!).replace(/\\/g, '/')}`)));
   });
 
@@ -540,7 +536,7 @@ describe('bridge manager', () => {
     assert.match(executor.runs.at(-1) || '', /这段输入来自语音转写/);
     assert.match(executor.runs.at(-1) || '', /今天先把待办窗口整理好/);
     assert.ok(adapter.sent.some(item => item.text.includes('已收到语音，正在转写并整理待办。')));
-    assert.ok(adapter.sent.some(item => item.text.includes('【今日待办】')));
+    assert.ok(adapter.sent.some(item => item.text.includes('【待办已添加】')));
   });
 
   it('captures a manual ai_news digest into the daily news note', async () => {

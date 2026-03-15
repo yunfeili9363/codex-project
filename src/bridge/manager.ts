@@ -842,7 +842,7 @@ function helpText(): string {
   return [
     '可用命令：',
     '/run <内容>             在当前工作区执行任务',
-    '/待办 <内容>            直接按 daily_todo 方式整理',
+    '/待办 <内容>            直接按 daily_todo 方式追加一条待办',
     '/收集 <内容或链接>      直接按 content_capture 方式沉淀',
     '/日报 [范围]            直接生成 AI 中文日报',
     '/digest [范围]          在 ai_news 场景里手动生成中文日报',
@@ -877,7 +877,7 @@ function usageText(): string {
     '直接发送文本、链接，或文本 + 链接',
     '',
     'daily_todo 场景：',
-    '直接发送零散计划、待办，或直接发语音',
+    '直接发送一条待办，或直接发语音；每次只追加一条，不做拆分',
     '',
     'ai_news 场景：',
     '使用 /digest 或 /digest 3d',

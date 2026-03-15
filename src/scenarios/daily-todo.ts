@@ -1,5 +1,4 @@
 import { fileURLToPath } from 'node:url';
-import crypto from 'node:crypto';
 import type { DailyTodoResult, InboundMessage, WorkspaceRecord } from '../bridge/types.js';
 import { dailyTodoFilePath, defaultVaultRoot, displayPath } from '../vault/paths.js';
 import { VaultWriter } from '../vault/writer.js';
@@ -42,18 +41,13 @@ export class DailyTodoScenarioHandler implements ScenarioHandler {
   }): Promise<ScenarioCompletionResult> {
     const parsed = parseDailyTodoResult(params.finalMessage);
     const vaultRoot = defaultVaultRoot(params.workspace.path, params.bindingVaultRoot);
-    const filePath = dailyTodoFilePath(vaultRoot, new Date());
-    const markdown = buildDailyTodoMarkdown(parsed);
-    await this.vaultWriter.appendMarkdown(filePath, markdown);
+    const filePath = dailyTodoFilePath(vaultRoot);
+    const appendResult = await this.vaultWriter.appendNumberedTodo(filePath, parsed.normalized_markdown_line);
     const prettyPath = displayPath(params.workspace.path, filePath);
 
-    const actionItems = parsed.must_do.length > 0
-      ? parsed.must_do.slice(0, 3)
-      : [parsed.top_priority];
-
     const userMessage = [
-      '【今日待办】',
-      ...actionItems.map((item, index) => `${index + 1}、${item}`),
+      '【待办已添加】',
+      `${appendResult.index}、${parsed.todo_text}`,
       `归档：${prettyPath}`,
     ].filter(Boolean).join('\n');
 
@@ -86,18 +80,18 @@ function buildDailyTodoPrompt(
   }
 
   return [
-    '你正在帮助用户把口语化、零散的计划整理成清晰的今日待办。',
+    '你正在帮助用户把一句口语化输入整理成一条待办。',
     `当前工作区：${workspaceName}`,
     '',
     '请返回符合 schema 的结构化 JSON。',
-    '请尽量具体、简洁、可执行。',
-    '只做轻量整理，不要扩展成顾问式长篇建议。',
-    '重点不是分析，而是从原句里抽取“要做什么”的关键信息。',
-    '优先给出现实可落地的任务和时间块，不要空泛鼓励。',
-    '如果输入不够完整，可以做合理整理，但不要编造不可能确定的细节。',
-    '保持一点智能：允许你合并重复表达、补齐明显缺失的动作主语，并识别先后顺序。',
-    '必做事项最多 3 条，可选事项最多 2 条，建议时间安排最多 3 段，备注最多 2 句。',
-    '最终应把最核心的待办拆成清晰短句，便于用 1、2、3 列出。',
+    '每次输入只允许产出一条待办，绝对不要拆成多条。',
+    '只做轻度整理，不要扩展成建议、提醒、优先级、复盘、计划分解。',
+    '允许你纠正明显转写错误、去掉口头语、合并重复表达、补齐明显缺失的动作主语。',
+    '如果原句中包含时间、人名、交付对象、发送对象、地点等关键信息，要保留下来。',
+    '不要添加用户没说过的新任务，也不要把一句话拆成多个子任务。',
+    'todo_text 必须是一条简洁清晰的待办句子。',
+    'normalized_markdown_line 与 todo_text 保持同义，适合直接写入 Markdown 有序列表。',
+    `source_mode 固定填 ${isVoice ? 'voice' : 'text'}。`,
     '所有字段默认使用简体中文输出。',
     ...(hints.length > 0 ? ['', ...hints] : []),
     '',
@@ -108,50 +102,10 @@ function buildDailyTodoPrompt(
 
 function parseDailyTodoResult(raw: string): DailyTodoResult {
   const parsed = JSON.parse(raw) as Partial<DailyTodoResult>;
-  const schedule = Array.isArray(parsed.suggested_schedule)
-    ? parsed.suggested_schedule
-        .map(item => ({
-          time_block: String(item?.time_block || '').trim(),
-          task: String(item?.task || '').trim(),
-        }))
-        .filter(item => item.time_block && item.task)
-    : [];
-
+  const todoText = parsed.todo_text?.trim() || '补充一条待办';
   return {
-    top_priority: parsed.top_priority?.trim() || '先明确今天最重要的一件事',
-    must_do: Array.isArray(parsed.must_do) ? parsed.must_do.map(String).map(item => item.trim()).filter(Boolean) : [],
-    optional: Array.isArray(parsed.optional) ? parsed.optional.map(String).map(item => item.trim()).filter(Boolean) : [],
-    cut_if_short_on_time: Array.isArray(parsed.cut_if_short_on_time)
-      ? parsed.cut_if_short_on_time.map(String).map(item => item.trim()).filter(Boolean)
-      : [],
-    suggested_schedule: schedule,
-    daily_note_markdown: parsed.daily_note_markdown?.trim() || '',
+    todo_text: todoText,
+    source_mode: parsed.source_mode === 'voice' ? 'voice' : 'text',
+    normalized_markdown_line: parsed.normalized_markdown_line?.trim() || todoText,
   };
-}
-
-function buildDailyTodoMarkdown(result: DailyTodoResult): string {
-  const lines: string[] = [
-    `## 今日计划更新`,
-    '',
-    `- 头号重点：${result.top_priority}`,
-  ];
-
-  if (result.must_do.length > 0) {
-    lines.push('', '### 必做事项', ...result.must_do.map(item => `- [ ] ${item}`));
-  }
-  if (result.optional.length > 0) {
-    lines.push('', '### 可选事项', ...result.optional.map(item => `- [ ] ${item}`));
-  }
-  if (result.cut_if_short_on_time.length > 0) {
-    lines.push('', '### 时间不够时先砍', ...result.cut_if_short_on_time.map(item => `- ${item}`));
-  }
-  if (result.suggested_schedule.length > 0) {
-    lines.push('', '### 建议时间安排', ...result.suggested_schedule.map(item => `- ${item.time_block}: ${item.task}`));
-  }
-  if (result.daily_note_markdown) {
-    lines.push('', '### 备注', result.daily_note_markdown);
-  }
-
-  lines.push('', `<!-- daily_todo_id:${crypto.randomUUID()} -->`);
-  return lines.join('\n');
 }

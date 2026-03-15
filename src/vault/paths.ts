@@ -21,9 +21,8 @@ export function sourceCaptureFilePath(
   return path.join(vaultRoot, 'sources', kind, dateSegment, `${slug}.md`);
 }
 
-export function dailyTodoFilePath(vaultRoot: string, date: Date): string {
-  const dateSegment = date.toISOString().slice(0, 10);
-  return path.join(vaultRoot, 'todo-daily', `${dateSegment}.md`);
+export function dailyTodoFilePath(vaultRoot: string): string {
+  return path.join(vaultRoot, 'todo-list.md');
 }
 
 export function aiNewsFilePath(vaultRoot: string, date: Date): string {

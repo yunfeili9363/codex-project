@@ -20,4 +20,24 @@ export class VaultWriter {
     fs.writeFileSync(filePath, `${content.trim()}\n`, 'utf8');
     return filePath;
   }
+
+  async appendNumberedTodo(filePath: string, itemText: string): Promise<{ filePath: string; index: number }> {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+
+    const normalizedItem = itemText.trim();
+    const header = '# 待办清单';
+
+    if (!fs.existsSync(filePath)) {
+      const initial = `${header}\n\n1. ${normalizedItem}\n`;
+      fs.writeFileSync(filePath, initial, 'utf8');
+      return { filePath, index: 1 };
+    }
+
+    const current = fs.readFileSync(filePath, 'utf8');
+    const matches = current.match(/^\d+\.\s+/gm) || [];
+    const nextIndex = matches.length + 1;
+    const separator = current.endsWith('\n') ? '' : '\n';
+    fs.writeFileSync(filePath, `${current}${separator}${nextIndex}. ${normalizedItem}\n`, 'utf8');
+    return { filePath, index: nextIndex };
+  }
 }

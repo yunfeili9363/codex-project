@@ -173,15 +173,9 @@ export interface ContentCaptureResult {
 }
 
 export interface DailyTodoResult {
-  top_priority: string;
-  must_do: string[];
-  optional: string[];
-  cut_if_short_on_time: string[];
-  suggested_schedule: Array<{
-    time_block: string;
-    task: string;
-  }>;
-  daily_note_markdown: string;
+  todo_text: string;
+  source_mode: 'text' | 'voice';
+  normalized_markdown_line: string;
 }
 
 export interface AiNewsResult {

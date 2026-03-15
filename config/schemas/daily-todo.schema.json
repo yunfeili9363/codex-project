@@ -2,52 +2,19 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "top_priority",
-    "must_do",
-    "optional",
-    "cut_if_short_on_time",
-    "suggested_schedule",
-    "daily_note_markdown"
+    "todo_text",
+    "source_mode",
+    "normalized_markdown_line"
   ],
   "properties": {
-    "top_priority": {
+    "todo_text": {
       "type": "string"
     },
-    "must_do": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
+    "source_mode": {
+      "type": "string",
+      "enum": ["text", "voice"]
     },
-    "optional": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
-    "cut_if_short_on_time": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
-    "suggested_schedule": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["time_block", "task"],
-        "properties": {
-          "time_block": {
-            "type": "string"
-          },
-          "task": {
-            "type": "string"
-          }
-        }
-      }
-    },
-    "daily_note_markdown": {
+    "normalized_markdown_line": {
       "type": "string"
     }
   }
