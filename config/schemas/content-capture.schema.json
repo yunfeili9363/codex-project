@@ -1,0 +1,37 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "title",
+    "source_type",
+    "source_url",
+    "summary",
+    "core_points",
+    "tags",
+    "content_angles",
+    "quick_card_markdown",
+    "reusable_note_markdown",
+    "suggested_path"
+  ],
+  "properties": {
+    "title": { "type": "string" },
+    "source_type": { "type": "string", "enum": ["text", "url", "mixed", "video"] },
+    "source_url": { "type": ["string", "null"] },
+    "summary": { "type": "string" },
+    "core_points": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "content_angles": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "quick_card_markdown": { "type": "string" },
+    "reusable_note_markdown": { "type": "string" },
+    "suggested_path": { "type": "string" }
+  }
+}

@@ -37,9 +37,50 @@ describe('sqlite store', () => {
     const store = createStore();
     store.bootstrap([workspace('main')]);
 
-    const binding = store.ensureChatBinding('chat-1', 'telegram', 'main');
+    const binding = store.ensureChatBinding('chat-1#10', 'telegram', 'main', 'chat-1', 10);
     assert.equal(binding.workspaceName, 'main');
+    assert.equal(binding.targetChatId, 'chat-1');
+    assert.equal(binding.topicId, 10);
     assert.equal(store.listEnabledWorkspaces().length, 1);
+  });
+
+  it('persists dynamically authorized chats', () => {
+    const store = createStore();
+    store.bootstrap([workspace('main')]);
+
+    store.authorizeChat('-100-group', 'admin-user', 'admin_auto_authorize');
+
+    assert.equal(store.isChatAuthorized('-100-group'), true);
+    assert.equal(store.isChatAuthorized('-100-other-group'), false);
+  });
+
+  it('persists scheduled ai_news jobs and exposes due runs', () => {
+    const store = createStore();
+    store.bootstrap([workspace('main')]);
+
+    const job = store.upsertScheduledJob({
+      id: 'job-1',
+      chatId: 'chat-1',
+      targetChatId: 'chat-1',
+      topicId: null,
+      channelType: 'telegram',
+      scenario: 'ai_news',
+      jobType: 'digest',
+      scheduleTime: '09:00',
+      enabled: true,
+      lastRunAt: null,
+      nextRunAt: '2026-03-14T09:00:00.000Z',
+    });
+
+    assert.equal(store.getScheduledJob('chat-1', 'ai_news', 'digest')?.scheduleTime, '09:00');
+    assert.equal(store.listDueScheduledJobs('2026-03-14T09:01:00.000Z').length, 1);
+
+    const updated = store.markScheduledJobRun(job.id, '2026-03-14T09:01:00.000Z', '2026-03-15T09:00:00.000Z');
+    assert.equal(updated.lastRunAt, '2026-03-14T09:01:00.000Z');
+    assert.equal(updated.nextRunAt, '2026-03-15T09:00:00.000Z');
+
+    const disabled = store.disableScheduledJob('chat-1', 'ai_news', 'digest');
+    assert.equal(disabled?.enabled, false);
   });
 
   it('persists task runs and approvals', () => {
@@ -49,8 +90,14 @@ describe('sqlite store', () => {
     const task = store.createTaskRun({
       id: 'task-1',
       chatId: 'chat-1',
+      targetChatId: 'chat-1',
+      topicId: null,
+      scenario: 'generic',
       workspaceName: 'main',
       threadId: null,
+      inputKind: 'text',
+      sourceUrl: null,
+      outputPath: null,
       prompt: 'test prompt',
       status: 'pending_approval',
       riskFlags: ['mass_delete_intent'],
@@ -81,8 +128,14 @@ describe('sqlite store', () => {
     store.createTaskRun({
       id: 'task-1',
       chatId: 'chat-1',
+      targetChatId: 'chat-1',
+      topicId: null,
+      scenario: 'generic',
       workspaceName: 'main',
       threadId: null,
+      inputKind: 'text',
+      sourceUrl: null,
+      outputPath: null,
       prompt: 'test prompt',
       status: 'running',
       riskFlags: [],

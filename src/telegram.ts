@@ -1,4 +1,5 @@
 import type { ChannelAdapter } from './bridge/interfaces.js';
+import { buildBindingKey } from './bridge/addressing.js';
 import type { DeliveryReceipt, InboundMessage, InlineButton, OutboundMessage } from './bridge/types.js';
 
 interface TelegramResponse<T> {
@@ -15,6 +16,8 @@ interface TelegramUpdate {
 
 interface TelegramMessage {
   message_id: number;
+  message_thread_id?: number;
+  is_topic_message?: boolean;
   text?: string;
   chat: {
     id: number;
@@ -40,6 +43,8 @@ interface TelegramCallbackQuery {
 export class TelegramAdapter implements ChannelAdapter {
   readonly channelType = 'telegram' as const;
   private offset = 0;
+  private running = false;
+  private currentPollController?: AbortController;
 
   constructor(
     private readonly token: string,
@@ -47,9 +52,16 @@ export class TelegramAdapter implements ChannelAdapter {
   ) {}
 
   async start(onMessage: (message: InboundMessage) => Promise<void>): Promise<void> {
-    while (true) {
+    if (this.running) {
+      throw new Error('Telegram adapter is already running');
+    }
+
+    this.running = true;
+    let failureCount = 0;
+    while (this.running) {
       try {
         const updates = await this.getUpdates();
+        failureCount = 0;
         for (const update of updates) {
           this.offset = update.update_id + 1;
           const inbound = toInbound(update);
@@ -58,15 +70,25 @@ export class TelegramAdapter implements ChannelAdapter {
           }
         }
       } catch (error) {
+        if (!this.running && isAbortError(error)) {
+          break;
+        }
         console.error('[telegram-adapter] polling failed:', error);
-        await sleep(1500);
+        failureCount += 1;
+        await sleep(Math.min(15_000, 1_500 * failureCount));
       }
     }
+  }
+
+  async stop(): Promise<void> {
+    this.running = false;
+    this.currentPollController?.abort();
   }
 
   async send(message: OutboundMessage): Promise<DeliveryReceipt> {
     const result = await this.request<TelegramMessage>('sendMessage', {
       chat_id: message.chatId,
+      message_thread_id: message.topicId ?? undefined,
       text: message.text,
       reply_to_message_id: message.replyToMessageId,
       reply_parameters: message.replyToMessageId ? { message_id: message.replyToMessageId } : undefined,
@@ -91,18 +113,33 @@ export class TelegramAdapter implements ChannelAdapter {
   }
 
   private async getUpdates(): Promise<TelegramUpdate[]> {
-    return this.request<TelegramUpdate[]>('getUpdates', {
+    this.currentPollController?.abort();
+    this.currentPollController = new AbortController();
+    try {
+      return await this.request<TelegramUpdate[]>('getUpdates', {
       offset: this.offset,
       timeout: this.pollTimeoutSeconds,
       allowed_updates: ['message', 'callback_query'],
-    });
+      }, {
+        signal: this.currentPollController.signal,
+        timeoutMs: (this.pollTimeoutSeconds + 10) * 1000,
+      });
+    } finally {
+      this.currentPollController = undefined;
+    }
   }
 
-  private async request<T>(method: string, body: Record<string, unknown>): Promise<T> {
+  private async request<T>(
+    method: string,
+    body: Record<string, unknown>,
+    options: { signal?: AbortSignal; timeoutMs?: number } = {},
+  ): Promise<T> {
+    const signal = combineSignals(options.signal, AbortSignal.timeout(options.timeoutMs ?? 15_000));
     const response = await fetch(`https://api.telegram.org/bot${this.token}/${method}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
+      signal,
     });
 
     if (!response.ok) {
@@ -121,10 +158,14 @@ export class TelegramAdapter implements ChannelAdapter {
 function toInbound(update: TelegramUpdate): InboundMessage | null {
   const callback = update.callback_query;
   if (callback?.message) {
+    const topicId = callback.message.message_thread_id ?? null;
+    const rawChatId = String(callback.message.chat.id);
     return {
       channelType: 'telegram',
       kind: 'callback',
-      chatId: String(callback.message.chat.id),
+      chatId: rawChatId,
+      bindingKey: buildBindingKey(rawChatId, topicId),
+      topicId,
       messageId: callback.message.message_id,
       userId: String(callback.from.id),
       userDisplayName: callback.from.username || callback.from.first_name,
@@ -134,10 +175,14 @@ function toInbound(update: TelegramUpdate): InboundMessage | null {
   }
 
   if (update.message) {
+    const topicId = update.message.message_thread_id ?? null;
+    const rawChatId = String(update.message.chat.id);
     return {
       channelType: 'telegram',
       kind: 'message',
-      chatId: String(update.message.chat.id),
+      chatId: rawChatId,
+      bindingKey: buildBindingKey(rawChatId, topicId),
+      topicId,
       messageId: update.message.message_id,
       userId: update.message.from ? String(update.message.from.id) : undefined,
       userDisplayName: update.message.from?.username || update.message.from?.first_name,
@@ -159,4 +204,15 @@ function toInlineKeyboard(buttons: InlineButton[][]): Array<Array<{ text: string
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function combineSignals(...signals: Array<AbortSignal | undefined>): AbortSignal | undefined {
+  const usable = signals.filter(Boolean) as AbortSignal[];
+  if (usable.length === 0) return undefined;
+  if (usable.length === 1) return usable[0];
+  return AbortSignal.any(usable);
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError';
 }

@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import fs from 'node:fs';
 import readline from 'node:readline';
-import type { ExecutionCallbacks, ExecutionHandle, Executor } from './bridge/interfaces.js';
+import type { ExecutionCallbacks, ExecutionHandle, ExecutionOptions, Executor } from './bridge/interfaces.js';
 import type { ApprovalMode, TaskRunRecord, WorkspaceRecord } from './bridge/types.js';
 
 interface CodexExecutorOptions {
@@ -21,7 +21,12 @@ interface CodexEvent {
 export class CodexExecutor implements Executor {
   constructor(private readonly options: CodexExecutorOptions) {}
 
-  runTask(task: TaskRunRecord, workspace: WorkspaceRecord, callbacks?: ExecutionCallbacks): ExecutionHandle {
+  runTask(
+    task: TaskRunRecord,
+    workspace: WorkspaceRecord,
+    callbacks?: ExecutionCallbacks,
+    executionOptions?: ExecutionOptions,
+  ): ExecutionHandle {
     const codexBin = resolveCodexBin(this.options.codexBin);
     const args = [
       '-a',
@@ -37,6 +42,10 @@ export class CodexExecutor implements Executor {
 
     if (task.model) {
       args.push('-m', task.model);
+    }
+
+    if (executionOptions?.outputSchemaPath) {
+      args.push('--output-schema', executionOptions.outputSchemaPath);
     }
 
     for (const extraDir of workspace.allowedAdditionalDirs) {

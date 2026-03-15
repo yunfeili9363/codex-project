@@ -1,0 +1,54 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "top_priority",
+    "must_do",
+    "optional",
+    "cut_if_short_on_time",
+    "suggested_schedule",
+    "daily_note_markdown"
+  ],
+  "properties": {
+    "top_priority": {
+      "type": "string"
+    },
+    "must_do": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "optional": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "cut_if_short_on_time": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "suggested_schedule": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["time_block", "task"],
+        "properties": {
+          "time_block": {
+            "type": "string"
+          },
+          "task": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "daily_note_markdown": {
+      "type": "string"
+    }
+  }
+}

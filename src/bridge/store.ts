@@ -7,7 +7,12 @@ import type {
   ApprovalRequestRecord,
   ApprovalStatus,
   ChatBindingRecord,
+  CaptureSourceType,
+  ContentItemRecord,
+  InputKind,
+  ScheduledJobRecord,
   SandboxMode,
+  ScenarioType,
   TaskRunRecord,
   TaskStatus,
   WorkspaceRecord,
@@ -84,6 +89,24 @@ export class SqliteStore implements Store {
     `).run(reason, interruptedAt);
   }
 
+  isChatAuthorized(chatId: string): boolean {
+    const row = this.db.prepare(`
+      SELECT chat_id
+      FROM authorized_chats
+      WHERE chat_id = ?
+    `).get(chatId) as { chat_id?: string } | undefined;
+    return Boolean(row?.chat_id);
+  }
+
+  authorizeChat(chatId: string, addedByUserId: string | null, source: string | null = 'admin_auto_authorize'): void {
+    this.db.prepare(`
+      INSERT INTO authorized_chats (
+        chat_id, added_by_user_id, source, created_at
+      ) VALUES (?, ?, ?, ?)
+      ON CONFLICT(chat_id) DO NOTHING
+    `).run(chatId, addedByUserId, source, nowIso());
+  }
+
   listEnabledWorkspaces(): WorkspaceRecord[] {
     const rows = this.db.prepare(`
       SELECT name, path, default_sandbox, default_model, allowed_additional_dirs, enabled, high_risk
@@ -105,23 +128,29 @@ export class SqliteStore implements Store {
 
   getChatBinding(chatId: string, channelType: 'telegram'): ChatBindingRecord | null {
     const row = this.db.prepare(`
-      SELECT chat_id, channel_type, workspace_name, current_thread_id, last_task_id, created_at, updated_at
+      SELECT chat_id, target_chat_id, topic_id, channel_type, scenario, scenario_config_json, vault_root, workspace_name, current_thread_id, last_task_id, created_at, updated_at
       FROM chat_bindings
       WHERE chat_id = ? AND channel_type = ?
     `).get(chatId, channelType) as ChatBindingRow | undefined;
     return row ? this.mapBinding(row) : null;
   }
 
-  ensureChatBinding(chatId: string, channelType: 'telegram', defaultWorkspaceName: string): ChatBindingRecord {
+  ensureChatBinding(
+    chatId: string,
+    channelType: 'telegram',
+    defaultWorkspaceName: string,
+    targetChatId: string,
+    topicId: number | null = null,
+  ): ChatBindingRecord {
     const existing = this.getChatBinding(chatId, channelType);
     if (existing) return existing;
 
     const timestamp = nowIso();
     this.db.prepare(`
       INSERT INTO chat_bindings (
-        chat_id, channel_type, workspace_name, current_thread_id, last_task_id, created_at, updated_at
-      ) VALUES (?, ?, ?, NULL, NULL, ?, ?)
-    `).run(chatId, channelType, defaultWorkspaceName, timestamp, timestamp);
+        chat_id, target_chat_id, topic_id, channel_type, scenario, scenario_config_json, vault_root, workspace_name, current_thread_id, last_task_id, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, 'generic', NULL, NULL, ?, NULL, NULL, ?, ?)
+    `).run(chatId, targetChatId, topicId, channelType, defaultWorkspaceName, timestamp, timestamp);
     return this.getChatBinding(chatId, channelType)!;
   }
 
@@ -131,6 +160,21 @@ export class SqliteStore implements Store {
       SET workspace_name = ?, updated_at = ?
       WHERE chat_id = ? AND channel_type = ?
     `).run(workspaceName, nowIso(), chatId, channelType);
+    return this.getChatBinding(chatId, channelType)!;
+  }
+
+  updateChatScenario(
+    chatId: string,
+    channelType: 'telegram',
+    scenario: ScenarioType,
+    scenarioConfigJson: string | null = null,
+    vaultRoot: string | null = null,
+  ): ChatBindingRecord {
+    this.db.prepare(`
+      UPDATE chat_bindings
+      SET scenario = ?, scenario_config_json = ?, vault_root = ?, updated_at = ?
+      WHERE chat_id = ? AND channel_type = ?
+    `).run(scenario, scenarioConfigJson, vaultRoot, nowIso(), chatId, channelType);
     return this.getChatBinding(chatId, channelType)!;
   }
 
@@ -155,14 +199,20 @@ export class SqliteStore implements Store {
     const finishedAt = input.finishedAt ?? null;
     this.db.prepare(`
       INSERT INTO task_runs (
-        id, chat_id, workspace_name, thread_id, prompt, status, risk_flags, approval_status,
+        id, chat_id, target_chat_id, topic_id, scenario, workspace_name, thread_id, input_kind, source_url, output_path, prompt, status, risk_flags, approval_status,
         sandbox, model, started_at, finished_at, final_message, error_text
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       input.id,
       input.chatId,
+      input.targetChatId,
+      input.topicId,
+      input.scenario,
       input.workspaceName,
       input.threadId,
+      input.inputKind,
+      input.sourceUrl,
+      input.outputPath,
       input.prompt,
       input.status,
       JSON.stringify(input.riskFlags),
@@ -179,7 +229,7 @@ export class SqliteStore implements Store {
 
   getTaskRun(id: string): TaskRunRecord | null {
     const row = this.db.prepare(`
-      SELECT id, chat_id, workspace_name, thread_id, prompt, status, risk_flags, approval_status,
+      SELECT id, chat_id, target_chat_id, topic_id, scenario, workspace_name, thread_id, input_kind, source_url, output_path, prompt, status, risk_flags, approval_status,
              sandbox, model, started_at, finished_at, final_message, error_text
       FROM task_runs
       WHERE id = ?
@@ -204,11 +254,17 @@ export class SqliteStore implements Store {
 
     this.db.prepare(`
       UPDATE task_runs
-      SET thread_id = ?, status = ?, risk_flags = ?, approval_status = ?, sandbox = ?, model = ?,
+      SET target_chat_id = ?, topic_id = ?, scenario = ?, thread_id = ?, input_kind = ?, source_url = ?, output_path = ?, status = ?, risk_flags = ?, approval_status = ?, sandbox = ?, model = ?,
           started_at = ?, finished_at = ?, final_message = ?, error_text = ?
       WHERE id = ?
     `).run(
+      next.targetChatId,
+      next.topicId,
+      next.scenario,
       next.threadId,
+      next.inputKind,
+      next.sourceUrl,
+      next.outputPath,
       next.status,
       JSON.stringify(next.riskFlags),
       next.approvalStatus,
@@ -225,7 +281,7 @@ export class SqliteStore implements Store {
 
   listTaskRunsByChat(chatId: string, limit: number): TaskRunRecord[] {
     const rows = this.db.prepare(`
-      SELECT id, chat_id, workspace_name, thread_id, prompt, status, risk_flags, approval_status,
+      SELECT id, chat_id, target_chat_id, topic_id, scenario, workspace_name, thread_id, input_kind, source_url, output_path, prompt, status, risk_flags, approval_status,
              sandbox, model, started_at, finished_at, final_message, error_text
       FROM task_runs
       WHERE chat_id = ?
@@ -237,7 +293,7 @@ export class SqliteStore implements Store {
 
   getLatestTaskRunByChat(chatId: string): TaskRunRecord | null {
     const row = this.db.prepare(`
-      SELECT id, chat_id, workspace_name, thread_id, prompt, status, risk_flags, approval_status,
+      SELECT id, chat_id, target_chat_id, topic_id, scenario, workspace_name, thread_id, input_kind, source_url, output_path, prompt, status, risk_flags, approval_status,
              sandbox, model, started_at, finished_at, final_message, error_text
       FROM task_runs
       WHERE chat_id = ?
@@ -295,6 +351,130 @@ export class SqliteStore implements Store {
     return this.getApprovalRequest(id)!;
   }
 
+  createContentItem(input: Omit<ContentItemRecord, 'createdAt'> & { createdAt?: string }): ContentItemRecord {
+    const createdAt = input.createdAt || nowIso();
+    this.db.prepare(`
+      INSERT INTO content_items (
+        id, task_run_id, scenario, title, source_type, source_url, summary, tags_json, file_path, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      input.id,
+      input.taskRunId,
+      input.scenario,
+      input.title,
+      input.sourceType,
+      input.sourceUrl,
+      input.summary,
+      JSON.stringify(input.tags),
+      input.filePath,
+      createdAt,
+    );
+    return this.getContentItem(input.id)!;
+  }
+
+  listContentItemsByChat(chatId: string, limit: number): ContentItemRecord[] {
+    const rows = this.db.prepare(`
+      SELECT ci.id, ci.task_run_id, ci.scenario, ci.title, ci.source_type, ci.source_url, ci.summary, ci.tags_json, ci.file_path, ci.created_at
+      FROM content_items ci
+      JOIN task_runs tr ON tr.id = ci.task_run_id
+      WHERE tr.chat_id = ?
+      ORDER BY ci.created_at DESC
+      LIMIT ?
+    `).all(chatId, limit) as unknown as ContentItemRow[];
+    return rows.map(row => this.mapContentItem(row));
+  }
+
+  upsertScheduledJob(input: Omit<ScheduledJobRecord, 'createdAt' | 'updatedAt'> & { createdAt?: string; updatedAt?: string }): ScheduledJobRecord {
+    const current = this.getScheduledJob(input.chatId, input.scenario, input.jobType);
+    const createdAt = current?.createdAt || input.createdAt || nowIso();
+    const updatedAt = input.updatedAt || nowIso();
+
+    this.db.prepare(`
+      INSERT INTO scheduled_jobs (
+        id, chat_id, target_chat_id, topic_id, channel_type, scenario, job_type, schedule_time, enabled, last_run_at, next_run_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(chat_id, scenario, job_type) DO UPDATE SET
+        target_chat_id = excluded.target_chat_id,
+        topic_id = excluded.topic_id,
+        channel_type = excluded.channel_type,
+        schedule_time = excluded.schedule_time,
+        enabled = excluded.enabled,
+        last_run_at = excluded.last_run_at,
+        next_run_at = excluded.next_run_at,
+        updated_at = excluded.updated_at
+    `).run(
+      current?.id || input.id,
+      input.chatId,
+      input.targetChatId,
+      input.topicId,
+      input.channelType,
+      input.scenario,
+      input.jobType,
+      input.scheduleTime,
+      boolToInt(input.enabled),
+      input.lastRunAt,
+      input.nextRunAt,
+      createdAt,
+      updatedAt,
+    );
+
+    return this.getScheduledJob(input.chatId, input.scenario, input.jobType)!;
+  }
+
+  getScheduledJob(chatId: string, scenario: ScheduledJobRecord['scenario'], jobType: ScheduledJobRecord['jobType']): ScheduledJobRecord | null {
+    const row = this.db.prepare(`
+      SELECT id, chat_id, target_chat_id, topic_id, channel_type, scenario, job_type, schedule_time, enabled, last_run_at, next_run_at, created_at, updated_at
+      FROM scheduled_jobs
+      WHERE chat_id = ? AND scenario = ? AND job_type = ?
+    `).get(chatId, scenario, jobType) as ScheduledJobRow | undefined;
+    return row ? this.mapScheduledJob(row) : null;
+  }
+
+  listScheduledJobsByChat(chatId: string): ScheduledJobRecord[] {
+    const rows = this.db.prepare(`
+      SELECT id, chat_id, target_chat_id, topic_id, channel_type, scenario, job_type, schedule_time, enabled, last_run_at, next_run_at, created_at, updated_at
+      FROM scheduled_jobs
+      WHERE chat_id = ?
+      ORDER BY created_at ASC
+    `).all(chatId) as unknown as ScheduledJobRow[];
+    return rows.map(row => this.mapScheduledJob(row));
+  }
+
+  listDueScheduledJobs(nowIso: string): ScheduledJobRecord[] {
+    const rows = this.db.prepare(`
+      SELECT id, chat_id, target_chat_id, topic_id, channel_type, scenario, job_type, schedule_time, enabled, last_run_at, next_run_at, created_at, updated_at
+      FROM scheduled_jobs
+      WHERE enabled = 1 AND next_run_at <= ?
+      ORDER BY next_run_at ASC
+    `).all(nowIso) as unknown as ScheduledJobRow[];
+    return rows.map(row => this.mapScheduledJob(row));
+  }
+
+  markScheduledJobRun(id: string, runAt: string, nextRunAt: string): ScheduledJobRecord {
+    this.db.prepare(`
+      UPDATE scheduled_jobs
+      SET last_run_at = ?, next_run_at = ?, updated_at = ?
+      WHERE id = ?
+    `).run(runAt, nextRunAt, nowIso(), id);
+
+    const row = this.db.prepare(`
+      SELECT id, chat_id, target_chat_id, topic_id, channel_type, scenario, job_type, schedule_time, enabled, last_run_at, next_run_at, created_at, updated_at
+      FROM scheduled_jobs
+      WHERE id = ?
+    `).get(id) as ScheduledJobRow | undefined;
+    if (!row) throw new Error(`Scheduled job not found: ${id}`);
+    return this.mapScheduledJob(row);
+  }
+
+  disableScheduledJob(chatId: string, scenario: ScheduledJobRecord['scenario'], jobType: ScheduledJobRecord['jobType']): ScheduledJobRecord | null {
+    this.db.prepare(`
+      UPDATE scheduled_jobs
+      SET enabled = 0, updated_at = ?
+      WHERE chat_id = ? AND scenario = ? AND job_type = ?
+    `).run(nowIso(), chatId, scenario, jobType);
+    return this.getScheduledJob(chatId, scenario, jobType);
+  }
+
   insertAuditEvent(input: AuditEventRecordInput): void {
     this.db.prepare(`
       INSERT INTO audit_events (
@@ -325,7 +505,12 @@ export class SqliteStore implements Store {
 
       CREATE TABLE IF NOT EXISTS chat_bindings (
         chat_id TEXT NOT NULL,
+        target_chat_id TEXT,
+        topic_id INTEGER,
         channel_type TEXT NOT NULL,
+        scenario TEXT NOT NULL DEFAULT 'generic',
+        scenario_config_json TEXT,
+        vault_root TEXT,
         workspace_name TEXT NOT NULL,
         current_thread_id TEXT,
         last_task_id TEXT,
@@ -337,8 +522,14 @@ export class SqliteStore implements Store {
       CREATE TABLE IF NOT EXISTS task_runs (
         id TEXT PRIMARY KEY,
         chat_id TEXT NOT NULL,
+        target_chat_id TEXT,
+        topic_id INTEGER,
+        scenario TEXT NOT NULL DEFAULT 'generic',
         workspace_name TEXT NOT NULL,
         thread_id TEXT,
+        input_kind TEXT NOT NULL DEFAULT 'text',
+        source_url TEXT,
+        output_path TEXT,
         prompt TEXT NOT NULL,
         status TEXT NOT NULL,
         risk_flags TEXT NOT NULL,
@@ -371,7 +562,60 @@ export class SqliteStore implements Store {
         payload TEXT NOT NULL,
         created_at TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS content_items (
+        id TEXT PRIMARY KEY,
+        task_run_id TEXT NOT NULL,
+        scenario TEXT NOT NULL,
+        title TEXT NOT NULL,
+        source_type TEXT NOT NULL,
+        source_url TEXT,
+        summary TEXT NOT NULL,
+        tags_json TEXT NOT NULL,
+        file_path TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS authorized_chats (
+        chat_id TEXT PRIMARY KEY,
+        added_by_user_id TEXT,
+        source TEXT,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS scheduled_jobs (
+        id TEXT PRIMARY KEY,
+        chat_id TEXT NOT NULL,
+        target_chat_id TEXT NOT NULL,
+        topic_id INTEGER,
+        channel_type TEXT NOT NULL,
+        scenario TEXT NOT NULL,
+        job_type TEXT NOT NULL,
+        schedule_time TEXT NOT NULL,
+        enabled INTEGER NOT NULL,
+        last_run_at TEXT,
+        next_run_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(chat_id, scenario, job_type)
+      );
     `);
+
+    this.ensureColumn('chat_bindings', 'scenario', `TEXT NOT NULL DEFAULT 'generic'`);
+    this.ensureColumn('chat_bindings', 'scenario_config_json', 'TEXT');
+    this.ensureColumn('chat_bindings', 'vault_root', 'TEXT');
+    this.ensureColumn('chat_bindings', 'target_chat_id', 'TEXT');
+    this.ensureColumn('chat_bindings', 'topic_id', 'INTEGER');
+
+    this.ensureColumn('task_runs', 'scenario', `TEXT NOT NULL DEFAULT 'generic'`);
+    this.ensureColumn('task_runs', 'input_kind', `TEXT NOT NULL DEFAULT 'text'`);
+    this.ensureColumn('task_runs', 'source_url', 'TEXT');
+    this.ensureColumn('task_runs', 'output_path', 'TEXT');
+    this.ensureColumn('task_runs', 'target_chat_id', 'TEXT');
+    this.ensureColumn('task_runs', 'topic_id', 'INTEGER');
+
+    this.db.exec(`UPDATE chat_bindings SET target_chat_id = COALESCE(target_chat_id, chat_id)`);
+    this.db.exec(`UPDATE task_runs SET target_chat_id = COALESCE(target_chat_id, chat_id)`);
   }
 
   private mapWorkspace(row: WorkspaceRow): WorkspaceRecord {
@@ -389,7 +633,12 @@ export class SqliteStore implements Store {
   private mapBinding(row: ChatBindingRow): ChatBindingRecord {
     return {
       chatId: row.chat_id,
+      targetChatId: row.target_chat_id || row.chat_id,
+      topicId: row.topic_id ?? null,
       channelType: row.channel_type as 'telegram',
+      scenario: (row.scenario || 'generic') as ScenarioType,
+      scenarioConfigJson: row.scenario_config_json,
+      vaultRoot: row.vault_root,
       workspaceName: row.workspace_name,
       currentThreadId: row.current_thread_id,
       lastTaskId: row.last_task_id,
@@ -402,8 +651,14 @@ export class SqliteStore implements Store {
     return {
       id: row.id,
       chatId: row.chat_id,
+      targetChatId: row.target_chat_id || row.chat_id,
+      topicId: row.topic_id ?? null,
+      scenario: (row.scenario || 'generic') as ScenarioType,
       workspaceName: row.workspace_name,
       threadId: row.thread_id,
+      inputKind: (row.input_kind || 'text') as InputKind,
+      sourceUrl: row.source_url,
+      outputPath: row.output_path,
       prompt: row.prompt,
       status: row.status as TaskStatus,
       riskFlags: parseJsonArray(row.risk_flags),
@@ -429,6 +684,54 @@ export class SqliteStore implements Store {
       resolvedBy: row.resolved_by,
     };
   }
+
+  private getContentItem(id: string): ContentItemRecord | null {
+    const row = this.db.prepare(`
+      SELECT id, task_run_id, scenario, title, source_type, source_url, summary, tags_json, file_path, created_at
+      FROM content_items
+      WHERE id = ?
+    `).get(id) as ContentItemRow | undefined;
+    return row ? this.mapContentItem(row) : null;
+  }
+
+  private mapContentItem(row: ContentItemRow): ContentItemRecord {
+    return {
+      id: row.id,
+      taskRunId: row.task_run_id,
+      scenario: row.scenario as ScenarioType,
+      title: row.title,
+      sourceType: row.source_type as CaptureSourceType,
+      sourceUrl: row.source_url,
+      summary: row.summary,
+      tags: parseJsonArray(row.tags_json),
+      filePath: row.file_path,
+      createdAt: row.created_at,
+    };
+  }
+
+  private mapScheduledJob(row: ScheduledJobRow): ScheduledJobRecord {
+    return {
+      id: row.id,
+      chatId: row.chat_id,
+      targetChatId: row.target_chat_id,
+      topicId: row.topic_id ?? null,
+      channelType: row.channel_type as 'telegram',
+      scenario: row.scenario as ScenarioType,
+      jobType: row.job_type as 'digest',
+      scheduleTime: row.schedule_time,
+      enabled: intToBool(row.enabled),
+      lastRunAt: row.last_run_at,
+      nextRunAt: row.next_run_at,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  private ensureColumn(table: string, column: string, definition: string): void {
+    const rows = this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name?: string }>;
+    if (rows.some(row => row.name === column)) return;
+    this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
 }
 
 interface WorkspaceRow {
@@ -443,7 +746,12 @@ interface WorkspaceRow {
 
 interface ChatBindingRow {
   chat_id: string;
+  target_chat_id: string | null;
+  topic_id: number | null;
   channel_type: string;
+  scenario: string | null;
+  scenario_config_json: string | null;
+  vault_root: string | null;
   workspace_name: string;
   current_thread_id: string | null;
   last_task_id: string | null;
@@ -454,8 +762,14 @@ interface ChatBindingRow {
 interface TaskRunRow {
   id: string;
   chat_id: string;
+  target_chat_id: string | null;
+  topic_id: number | null;
+  scenario: string | null;
   workspace_name: string;
   thread_id: string | null;
+  input_kind: string | null;
+  source_url: string | null;
+  output_path: string | null;
   prompt: string;
   status: string;
   risk_flags: string;
@@ -477,4 +791,33 @@ interface ApprovalRequestRow {
   created_at: string;
   resolved_at: string | null;
   resolved_by: string | null;
+}
+
+interface ContentItemRow {
+  id: string;
+  task_run_id: string;
+  scenario: string;
+  title: string;
+  source_type: string;
+  source_url: string | null;
+  summary: string;
+  tags_json: string;
+  file_path: string;
+  created_at: string;
+}
+
+interface ScheduledJobRow {
+  id: string;
+  chat_id: string;
+  target_chat_id: string;
+  topic_id: number | null;
+  channel_type: string;
+  scenario: string;
+  job_type: string;
+  schedule_time: string;
+  enabled: number;
+  last_run_at: string | null;
+  next_run_at: string;
+  created_at: string;
+  updated_at: string;
 }

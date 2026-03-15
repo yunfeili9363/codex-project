@@ -8,9 +8,11 @@ const ROOT_DIR = path.dirname(fileURLToPath(new URL('../package.json', import.me
 export interface AppConfig {
   telegramBotToken: string;
   allowedChatIds: Set<string>;
+  adminUserIds: Set<string>;
   pollTimeoutSeconds: number;
   databasePath: string;
   workspacesPath: string;
+  instanceLockPath: string;
   defaultApprovalMode: ApprovalMode;
   codexBin?: string;
 }
@@ -103,16 +105,23 @@ export function loadConfig(): AppConfig {
   if (allowedChatIds.size === 0) {
     throw new Error('TELEGRAM_ALLOWED_CHAT_IDS must contain at least one chat id');
   }
+  const adminSeed = process.env.TELEGRAM_ADMIN_USER_IDS
+    ? parseList(process.env.TELEGRAM_ADMIN_USER_IDS)
+    : [...allowedChatIds].filter(item => !item.startsWith('-'));
+  const adminUserIds = new Set(adminSeed);
 
   const databasePath = path.resolve(ROOT_DIR, process.env.DATABASE_PATH || 'data/bridge.db');
   const workspacesPath = path.resolve(ROOT_DIR, process.env.WORKSPACES_CONFIG_PATH || 'config/workspaces.json');
+  const instanceLockPath = path.resolve(ROOT_DIR, process.env.INSTANCE_LOCK_PATH || 'data/bridge.lock');
 
   return {
     telegramBotToken: requireEnv('TELEGRAM_BOT_TOKEN'),
     allowedChatIds,
+    adminUserIds,
     pollTimeoutSeconds: Number.parseInt(process.env.POLL_TIMEOUT_SECONDS || '30', 10) || 30,
     databasePath,
     workspacesPath,
+    instanceLockPath,
     defaultApprovalMode: parseApproval(process.env.CODEX_APPROVAL),
     codexBin: process.env.CODEX_BIN?.trim() || undefined,
   };

@@ -50,6 +50,7 @@ git --version
 ```bash
 TELEGRAM_BOT_TOKEN=你的Telegram机器人Token
 TELEGRAM_ALLOWED_CHAT_IDS=允许使用机器人的Telegram聊天ID
+TELEGRAM_ADMIN_USER_IDS=允许自动授权新群的管理员Telegram用户ID
 CODEX_APPROVAL=never
 CODEX_BIN=/Applications/Codex.app/Contents/Resources/codex
 POLL_TIMEOUT_SECONDS=30
@@ -63,6 +64,8 @@ WORKSPACES_CONFIG_PATH=config/workspaces.json
   Telegram 机器人的 token。
 - `TELEGRAM_ALLOWED_CHAT_IDS`
   允许操作 bot 的 chat id。只有这里面的人能发命令。
+- `TELEGRAM_ADMIN_USER_IDS`
+  允许自动授权新群的管理员用户 id。管理员把 bot 拉进新群后，只要先在群里发一条消息，这个群就会被自动加入动态授权表，不需要再手改 `.env`。
 - `CODEX_APPROVAL`
   `codex exec` 的审批模式。当前建议保持 `never`。
 - `CODEX_BIN`
@@ -138,7 +141,33 @@ telegram-codex-bridge starting with 1 workspace(s)
 
 先给 bot 发消息。
 
-推荐按这个顺序测试：
+推荐中期用法是：
+
+- 一个 bot
+- 一个私聊保留给 `generic`
+- 一个超级群里的多个固定 topic 分别绑定不同场景
+
+这个项目现在已经支持按 `chat -> scenario + workspace` 路由；如果是 Telegram topic，则会进一步按 `chat_id#topic_id` 单独绑定。所以同一个群里的不同 topic 可以分别绑定成：
+
+- `content_capture`
+- `daily_todo`
+- `ai_news`
+- 或继续保留 `generic`
+
+推荐优先用聊天格式：
+
+```text
+scenario: 帮我看看当前工作区结构
+workspace: bridge
+```
+
+如果当前 chat 已经选中过 workspace，也可以直接发：
+
+```text
+帮我分析这个项目的 README 和主要入口文件
+```
+
+命令模式仍然可用，适合查看状态或显式切换：
 
 ### 5.1 查看工作区
 
@@ -159,7 +188,36 @@ telegram-codex-bridge starting with 1 workspace(s)
 
 如果你以后在 `workspaces.json` 里加了更多项目，就能切换到别的工作区。
 
-### 5.3 查看状态
+### 5.3 查看当前场景
+
+```text
+/scenario
+```
+
+### 5.4 绑定场景
+
+```text
+/bindscenario generic
+/bindscenario content_capture
+```
+
+当前已经真正可用的场景：
+
+- `generic`
+- `content_capture`
+- `daily_todo`
+- `ai_news`
+
+建议固定窗口第一次就执行：
+
+```text
+/use bridge
+/bindscenario content_capture
+```
+
+如果你在同一个超级群里开多个 topic，就在每个 topic 里分别执行一遍。每个 topic 会记住自己的设置。
+
+### 5.5 查看状态
 
 ```text
 /status
@@ -170,19 +228,110 @@ telegram-codex-bridge starting with 1 workspace(s)
 - 查看当前有没有任务在跑
 - 如果没有运行中的任务，会显示最近一次任务状态
 
-### 5.4 执行任务
+### 5.6 执行任务
 
 ```text
 /run 帮我看看当前工作区结构
 ```
 
-再比如：
+或者直接发聊天消息：
 
 ```text
-/run 帮我分析这个项目的 README 和主要入口文件
+scenario: 帮我分析这个项目的 README 和主要入口文件
+workspace: bridge
 ```
 
-### 5.5 中止任务
+### 5.7 内容沉淀场景怎么用
+
+先切场景：
+
+```text
+/bindscenario content_capture
+```
+
+然后直接发链接或观点：
+
+```text
+https://example.com/post 这条内容的核心观点是什么，帮我沉淀成 markdown
+```
+
+或者：
+
+```text
+我觉得 AI agent 的真正门槛不是推理，而是长期状态管理和工具边界，帮我整理成选题卡片
+```
+
+成功后会：
+
+1. Telegram 返回摘要
+2. 本地写入 markdown 到 `vault/inbox/...`
+3. SQLite 记录一条内容沉淀记录
+
+### 5.8 今日待办场景怎么用
+
+先切场景：
+
+```text
+/bindscenario daily_todo
+```
+
+然后直接发一段口语化计划：
+
+```text
+今天先把 bot 的自动授权做完，下午处理 daily_todo，晚上留 30 分钟复盘
+```
+
+成功后会：
+
+1. Telegram 返回摘要版今日计划
+2. 本地追加到 `vault/todo-daily/YYYY-MM-DD.md`
+3. 同一天再次发送时，会继续追加，不会覆盖前一版
+
+### 5.9 AI资讯场景怎么用
+
+先切场景：
+
+```text
+/bindscenario ai_news
+```
+
+然后手动触发 digest：
+
+```text
+/digest
+```
+
+或者给一个更宽的范围提示：
+
+```text
+/digest 3d
+```
+
+成功后会：
+
+1. Telegram 返回 top items 摘要
+2. 本地追加到 `vault/ai-news/YYYY-MM-DD.md`
+3. 同一天多次运行时，会继续追加不同版本
+
+如果你想让这个窗口每天自动跑：
+
+```text
+/schedule digest 09:00
+```
+
+查看当前窗口已配置的计划：
+
+```text
+/schedule
+```
+
+关闭自动 digest：
+
+```text
+/unschedule digest
+```
+
+### 5.10 中止任务
 
 ```text
 /abort
@@ -190,7 +339,7 @@ telegram-codex-bridge starting with 1 workspace(s)
 
 如果当前 chat 有任务在执行，会向本机 Codex 发送终止信号。
 
-### 5.6 查看历史
+### 5.11 查看历史
 
 ```text
 /history
@@ -198,7 +347,7 @@ telegram-codex-bridge starting with 1 workspace(s)
 
 会显示最近任务的摘要。
 
-### 5.7 查看帮助
+### 5.12 查看帮助
 
 ```text
 /help
@@ -398,6 +547,27 @@ cd "/Users/a1-6/Documents/codex project"
 npm run dev
 ```
 
+如果你希望长期稳定运行，直接用：
+
+```bash
+cd "/Users/a1-6/Documents/codex project"
+npm run service:install
+```
+
+卸载：
+
+```bash
+cd "/Users/a1-6/Documents/codex project"
+npm run service:uninstall
+```
+
+日志路径：
+
+```text
+/Users/a1-6/Documents/codex project/logs/bridge.out.log
+/Users/a1-6/Documents/codex project/logs/bridge.err.log
+```
+
 Telegram 里：
 
 ```text
@@ -411,8 +581,9 @@ Telegram 里：
 如果后面我们继续升级，比较适合加这些：
 
 - `/resume` 续接 thread
+- `daily_todo`
+- `ai_news`
 - 更细粒度的流式进度显示
 - 文件上传后交给 Codex 处理
 - 更多工作区管理命令
 - 后台常驻运行（pm2 / launchd）
-

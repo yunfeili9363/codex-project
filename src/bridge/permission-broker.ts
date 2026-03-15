@@ -19,7 +19,8 @@ export class PermissionBroker {
     });
 
     await this.adapter.send({
-      chatId: task.chatId,
+      chatId: task.targetChatId,
+      topicId: task.topicId,
       replyToMessageId,
       text: [
         'Approval required before task execution.',
