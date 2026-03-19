@@ -46,10 +46,31 @@ export class DailyTodoScenarioHandler implements ScenarioHandler {
     const prettyPath = displayPath(params.workspace.path, filePath);
 
     const userMessage = [
-      '【待办已添加】',
-      `${appendResult.index}、${parsed.todo_text}`,
+      '【待办清单】',
+      ...appendResult.items.map((item, index) => `${index + 1}、${item}`),
+      `已添加：${appendResult.index}、${parsed.todo_text}`,
       `归档：${prettyPath}`,
     ].filter(Boolean).join('\n');
+
+    return {
+      userMessage,
+      outputPath: filePath,
+      finalMessageForTask: userMessage,
+    };
+  }
+
+  async renderList(params: {
+    workspace: WorkspaceRecord;
+    bindingVaultRoot: string | null;
+  }): Promise<ScenarioCompletionResult> {
+    const vaultRoot = defaultVaultRoot(params.workspace.path, params.bindingVaultRoot);
+    const filePath = dailyTodoFilePath(vaultRoot);
+    const items = await this.vaultWriter.readNumberedTodos(filePath);
+    const prettyPath = displayPath(params.workspace.path, filePath);
+
+    const userMessage = items.length === 0
+      ? ['【待办清单】', '当前还没有待办。', `归档：${prettyPath}`].join('\n')
+      : ['【待办清单】', ...items.map((item, index) => `${index + 1}、${item}`), `归档：${prettyPath}`].join('\n');
 
     return {
       userMessage,

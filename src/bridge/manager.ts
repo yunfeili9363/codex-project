@@ -268,6 +268,18 @@ export class BridgeManager {
       return;
     }
 
+    if (binding.scenario === 'daily_todo' && isTodoListQuery(text)) {
+      const handler = this.scenarioRouter.getHandler('daily_todo');
+      if (handler?.renderList) {
+        const completion = await handler.renderList({
+          workspace,
+          bindingVaultRoot: binding.vaultRoot,
+        });
+        await this.reply(message.chatId, message.topicId, completion.userMessage, message.messageId);
+        return;
+      }
+    }
+
     if (text === '/history') {
       const history = this.store.listTaskRunsByChat(message.bindingKey, 5);
       if (history.length === 0) {
@@ -972,6 +984,26 @@ function shouldSendPreparationAck(
   const trimmed = text.trim();
   if (!trimmed || trimmed.startsWith('/')) return false;
   return /https?:\/\/[^\s]+/i.test(trimmed);
+}
+
+function isTodoListQuery(text: string): boolean {
+  const normalized = text.trim().replace(/\s+/g, '');
+  if (!normalized) return false;
+  return [
+    '列出来当前的待办清单',
+    '列出来当前待办清单',
+    '列出当前的待办清单',
+    '列出当前待办清单',
+    '查看当前待办清单',
+    '显示当前待办清单',
+    '查看待办清单',
+    '显示待办清单',
+    '列出待办',
+    '查看待办',
+    '显示待办',
+    '当前待办',
+    '待办清单',
+  ].includes(normalized);
 }
 
 function parseDigestSchedule(text: string): { time: string } | null {

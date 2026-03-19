@@ -505,8 +505,10 @@ describe('bridge manager', () => {
     assert.match(markdown, /1\. 把 Telegram bot 的 daily_todo 场景做完，并回复测试群消息/);
     assert.match(markdown, /2\. 下午补一个复盘和整理动作/);
     assert.ok(!markdown.includes('---'));
-    assert.ok(adapter.sent.some(item => item.text.includes('【待办已添加】')));
+    assert.ok(adapter.sent.some(item => item.text.includes('【待办清单】')));
+    assert.ok(adapter.sent.some(item => item.text.includes('1、把 Telegram bot 的 daily_todo 场景做完，并回复测试群消息')));
     assert.ok(adapter.sent.some(item => item.text.includes('2、下午补一个复盘和整理动作')));
+    assert.ok(adapter.sent.some(item => item.text.includes('已添加：2、下午补一个复盘和整理动作')));
     assert.ok(adapter.sent.some(item => item.text.includes(`归档：${path.relative(store.getWorkspace('main')!.path, filePath!).replace(/\\/g, '/')}`)));
   });
 
@@ -536,7 +538,25 @@ describe('bridge manager', () => {
     assert.match(executor.runs.at(-1) || '', /这段输入来自语音转写/);
     assert.match(executor.runs.at(-1) || '', /今天先把待办窗口整理好/);
     assert.ok(adapter.sent.some(item => item.text.includes('已收到语音，正在转写并整理待办。')));
-    assert.ok(adapter.sent.some(item => item.text.includes('【待办已添加】')));
+    assert.ok(adapter.sent.some(item => item.text.includes('【待办清单】')));
+  });
+
+  it('shows the current todo list without adding a new item when asked to list it', async () => {
+    const adapter = new FakeAdapter();
+    const executor = new FakeExecutor();
+    const store = createStore();
+    const manager = new BridgeManager(adapter, store, executor, new DefaultRiskEvaluator(), new Set(['chat-1']));
+
+    await manager.handleInbound(inbound('/bindscenario daily_todo'));
+    await manager.handleInbound(inbound('把海报做出来发给 Ken'));
+    await manager.handleInbound(inbound('列出来当前的待办清单'));
+
+    const tasks = store.listTaskRunsByChat('chat-1', 10);
+    assert.equal(tasks.length, 1);
+    assert.equal(tasks[0]?.scenario, 'daily_todo');
+    assert.ok(adapter.sent.some(item => item.text.includes('【待办清单】')));
+    assert.ok(adapter.sent.some(item => item.text.includes('1、把 Telegram bot 的 daily_todo 场景做完，并回复测试群消息')));
+    assert.ok(!adapter.sent.some(item => item.text.includes('已添加：2、列出来当前的待办清单')));
   });
 
   it('captures a manual ai_news digest into the daily news note', async () => {

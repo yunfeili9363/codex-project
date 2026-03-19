@@ -22,6 +22,10 @@ export interface ScenarioHandler {
   readonly scenario: ScenarioType;
   canHandle(message: InboundMessage): boolean;
   buildTaskPlan(message: InboundMessage, workspace: WorkspaceRecord): Promise<ScenarioTaskPlan | null>;
+  renderList?(params: {
+    workspace: WorkspaceRecord;
+    bindingVaultRoot: string | null;
+  }): Promise<ScenarioCompletionResult>;
   complete?(params: {
     finalMessage: string;
     workspace: WorkspaceRecord;
