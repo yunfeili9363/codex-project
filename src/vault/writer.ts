@@ -20,42 +20,4 @@ export class VaultWriter {
     fs.writeFileSync(filePath, `${content.trim()}\n`, 'utf8');
     return filePath;
   }
-
-  async appendNumberedTodo(filePath: string, itemText: string): Promise<{ filePath: string; index: number; items: string[] }> {
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-
-    const normalizedItem = itemText.trim();
-    const header = '# 待办清单';
-
-    if (!fs.existsSync(filePath)) {
-      const initial = `${header}\n\n1. ${normalizedItem}\n`;
-      fs.writeFileSync(filePath, initial, 'utf8');
-      return { filePath, index: 1, items: [normalizedItem] };
-    }
-
-    const current = fs.readFileSync(filePath, 'utf8');
-    const currentItems = parseNumberedTodoItems(current);
-    const nextIndex = currentItems.length + 1;
-    const separator = current.endsWith('\n') ? '' : '\n';
-    fs.writeFileSync(filePath, `${current}${separator}${nextIndex}. ${normalizedItem}\n`, 'utf8');
-    return { filePath, index: nextIndex, items: [...currentItems, normalizedItem] };
-  }
-
-  async readNumberedTodos(filePath: string): Promise<string[]> {
-    if (!fs.existsSync(filePath)) {
-      return [];
-    }
-
-    return parseNumberedTodoItems(fs.readFileSync(filePath, 'utf8'));
-  }
-}
-
-function parseNumberedTodoItems(markdown: string): string[] {
-  return markdown
-    .split(/\r?\n/)
-    .map(line => {
-      const match = /^\d+\.\s+(.+)$/.exec(line.trim());
-      return match?.[1]?.trim() || '';
-    })
-    .filter(Boolean);
 }

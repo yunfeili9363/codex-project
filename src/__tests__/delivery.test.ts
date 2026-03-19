@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { DeliveryLayer } from '../bridge/delivery.js';
 import type { ChannelAdapter, Store } from '../bridge/interfaces.js';
-import type { ApprovalRequestRecord, ChatBindingRecord, DeliveryReceipt, OutboundMessage, ScheduledJobRecord, TaskRunRecord, WorkspaceRecord } from '../bridge/types.js';
+import type { ApprovalRequestRecord, ChatBindingRecord, DeliveryReceipt, OutboundMessage, TaskRunRecord, WorkspaceRecord } from '../bridge/types.js';
 
 class FakeAdapter implements ChannelAdapter {
   readonly channelType = 'telegram' as const;
@@ -32,7 +32,6 @@ class FakeStore implements Store {
   getChatBinding(): ChatBindingRecord | null { return null; }
   ensureChatBinding(): ChatBindingRecord { throw new Error('not used'); }
   updateChatWorkspace(): ChatBindingRecord { throw new Error('not used'); }
-  updateChatScenario(): ChatBindingRecord { throw new Error('not used'); }
   updateChatCurrentTask() {}
   updateChatCurrentThread() {}
   createTaskRun(): TaskRunRecord { throw new Error('not used'); }
@@ -43,14 +42,6 @@ class FakeStore implements Store {
   createApprovalRequest(): ApprovalRequestRecord { throw new Error('not used'); }
   getApprovalRequest(): ApprovalRequestRecord | null { return null; }
   updateApprovalRequest(): ApprovalRequestRecord { throw new Error('not used'); }
-  createContentItem(): any { throw new Error('not used'); }
-  listContentItemsByChat() { return []; }
-  upsertScheduledJob(): ScheduledJobRecord { throw new Error('not used'); }
-  getScheduledJob(): ScheduledJobRecord | null { return null; }
-  listScheduledJobsByChat(): ScheduledJobRecord[] { return []; }
-  listDueScheduledJobs(): ScheduledJobRecord[] { return []; }
-  markScheduledJobRun(): ScheduledJobRecord { throw new Error('not used'); }
-  disableScheduledJob(): ScheduledJobRecord | null { return null; }
   insertAuditEvent(): void {}
 }
 

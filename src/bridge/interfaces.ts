@@ -1,12 +1,10 @@
 import type {
   ApprovalRequestRecord,
   ChatBindingRecord,
-  ContentItemRecord,
   DeliveryReceipt,
   InboundMessage,
   OutboundMessage,
   RiskEvaluation,
-  ScheduledJobRecord,
   TaskRunRecord,
   WorkspaceRecord,
 } from './types.js';
@@ -65,13 +63,6 @@ export interface Store {
     topicId?: number | null,
   ): ChatBindingRecord;
   updateChatWorkspace(chatId: string, channelType: 'telegram', workspaceName: string): ChatBindingRecord;
-  updateChatScenario(
-    chatId: string,
-    channelType: 'telegram',
-    scenario: ChatBindingRecord['scenario'],
-    scenarioConfigJson?: string | null,
-    vaultRoot?: string | null,
-  ): ChatBindingRecord;
   updateChatCurrentTask(chatId: string, channelType: 'telegram', taskId: string | null): void;
   updateChatCurrentThread(chatId: string, channelType: 'telegram', threadId: string | null): void;
 
@@ -84,16 +75,6 @@ export interface Store {
   createApprovalRequest(input: Omit<ApprovalRequestRecord, 'createdAt' | 'resolvedAt'> & { createdAt?: string; resolvedAt?: string | null }): ApprovalRequestRecord;
   getApprovalRequest(id: string): ApprovalRequestRecord | null;
   updateApprovalRequest(id: string, updates: Partial<Omit<ApprovalRequestRecord, 'id' | 'taskRunId' | 'chatId' | 'createdAt'>>): ApprovalRequestRecord;
-
-  createContentItem(input: Omit<ContentItemRecord, 'createdAt'> & { createdAt?: string }): ContentItemRecord;
-  listContentItemsByChat(chatId: string, limit: number): ContentItemRecord[];
-
-  upsertScheduledJob(input: Omit<ScheduledJobRecord, 'createdAt' | 'updatedAt'> & { createdAt?: string; updatedAt?: string }): ScheduledJobRecord;
-  getScheduledJob(chatId: string, scenario: ScheduledJobRecord['scenario'], jobType: ScheduledJobRecord['jobType']): ScheduledJobRecord | null;
-  listScheduledJobsByChat(chatId: string): ScheduledJobRecord[];
-  listDueScheduledJobs(nowIso: string): ScheduledJobRecord[];
-  markScheduledJobRun(id: string, runAt: string, nextRunAt: string): ScheduledJobRecord;
-  disableScheduledJob(chatId: string, scenario: ScheduledJobRecord['scenario'], jobType: ScheduledJobRecord['jobType']): ScheduledJobRecord | null;
 
   insertAuditEvent(input: AuditEventRecordInput): void;
 }

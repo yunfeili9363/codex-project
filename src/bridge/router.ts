@@ -1,5 +1,5 @@
 import type { Store } from './interfaces.js';
-import type { ChatBindingRecord, ScenarioType } from './types.js';
+import type { ChatBindingRecord } from './types.js';
 
 export class SessionRouter {
   constructor(private readonly store: Store) {}
@@ -24,16 +24,5 @@ export class SessionRouter {
   setWorkspace(chatId: string, channelType: 'telegram', workspaceName: string): ChatBindingRecord {
     this.resolve(chatId, channelType);
     return this.store.updateChatWorkspace(chatId, channelType, workspaceName);
-  }
-
-  setScenario(
-    chatId: string,
-    channelType: 'telegram',
-    scenario: ScenarioType,
-    scenarioConfigJson?: string | null,
-    vaultRoot?: string | null,
-  ): ChatBindingRecord {
-    this.resolve(chatId, channelType);
-    return this.store.updateChatScenario(chatId, channelType, scenario, scenarioConfigJson, vaultRoot);
   }
 }

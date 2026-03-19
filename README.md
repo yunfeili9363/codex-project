@@ -1,103 +1,140 @@
-# Telegram Codex Bridge V2
+# Telegram Codex Bot
 
-一个借鉴 `Claude-to-IM` 分层思路、但执行内核仍然是本机 `codex exec` 的 Telegram 工作台。
+这是一个极简版的 Telegram -> Codex 桥接器。  
+现在项目只保留一个通用机器人入口，不再区分 `daily_todo`、`content_capture`、`ai_news` 这些场景。
 
-## 现在有什么
+你可以把它理解成：
 
-- Telegram 长轮询适配器
-- SQLite 持久化：workspace、chat 绑定、任务、审批、审计
-- `chat -> scenario + workspace` 绑定
-- 命名工作区注册表
-- `content_capture` 场景最小可用版
-- `daily_todo` 场景最小可用版
-- `ai_news` 手动 `/digest` 最小可用版
-- `/run` `/status` `/abort` `/workspaces` `/use` `/scenario` `/bindscenario` `/history` `/help`
-- 高风险任务 Telegram inline button 审批
-- 任务状态消息编辑、分片发送、基础重试
-- 进程重启时把未完成任务标记为 `interrupted`
-- 支持“同一个 bot + 多个固定 chat/topic”独立绑定场景和 workspace
-- 单实例锁、优雅退出、Telegram 长轮询超时与退避
+- 只有一个 Telegram 机器人
+- 你直接给它发文字或语音
+- 它会在本机工作区里调用 `codex exec`
+- 再把结果回发到 Telegram
 
-## 架构
+## 现在保留的能力
 
-```text
-Telegram Adapter
-  -> Bridge Manager
-  -> Session Router
-  -> Scenario Router
-  -> Risk Evaluator / Permission Broker
-  -> Delivery Layer
-  -> Codex Executor
-  -> SQLite Store
-```
+- 文字消息直接执行
+- 语音消息先转写再执行
+- `/run <内容>`
+- `/status`
+- `/abort`
+- `/history`
+- `/help`
+- Telegram 白名单和管理员自动授权
+- SQLite 持久化任务记录
+- `launchd` 常驻运行
 
-## 前提
+## 已移除的内容
 
-- 本机已安装并可运行 `codex`
-- 本机已登录 Codex
-- Node.js 24+（使用 `node:sqlite`）
-- 一个 Telegram Bot Token
+这些旧能力已经从主流程里移除：
+
+- 多场景路由
+- `daily_todo`
+- `content_capture`
+- `ai_news`
+- `/bindscenario`
+- `/digest`
+- `/schedule`
+- `/unschedule`
+- `/待办`
+- `/收集`
+- `/日报`
+
+## 目录结构
+
+核心入口：
+
+- [src/index.ts](/Users/a1-6/Documents/codex%20project/src/index.ts)
+- [src/bridge/manager.ts](/Users/a1-6/Documents/codex%20project/src/bridge/manager.ts)
+- [src/codex.ts](/Users/a1-6/Documents/codex%20project/src/codex.ts)
+- [src/telegram.ts](/Users/a1-6/Documents/codex%20project/src/telegram.ts)
 
 ## 配置
 
-1. 复制 `.env.example` 为 `.env`
-2. 编辑 `config/workspaces.json`
-
-`.env` 至少需要：
+复制 `.env.example` 为 `.env`，至少填这些：
 
 ```bash
-TELEGRAM_BOT_TOKEN=...
-TELEGRAM_ALLOWED_CHAT_IDS=123456789
-TELEGRAM_ADMIN_USER_IDS=123456789
+TELEGRAM_BOT_TOKEN=你的 bot token
+TELEGRAM_ALLOWED_CHAT_IDS=你的 chat id
+TELEGRAM_ADMIN_USER_IDS=你的 Telegram user id
 CODEX_BIN=/Applications/Codex.app/Contents/Resources/codex
-DATABASE_PATH=data/bridge.db
-INSTANCE_LOCK_PATH=data/bridge.lock
 WORKSPACES_CONFIG_PATH=config/workspaces.json
-YT_DLP_BIN=yt-dlp
-WHISPER_PYTHON_BIN=python3
-WHISPER_MODEL=turbo
-WHISPER_LANGUAGE=auto
 ```
 
-说明：
+工作区配置默认只有一个：
 
-- `TELEGRAM_ALLOWED_CHAT_IDS` 是静态白名单，适合你的私聊和长期固定群
-- `TELEGRAM_ADMIN_USER_IDS` 是管理员 Telegram 用户 id；管理员在新群里发第一条消息时，bot 会自动把这个群写入 SQLite 动态授权表，后续不用再改 `.env`
-- `INSTANCE_LOCK_PATH` 用来防止你不小心启动两个 bot 进程
-- `YT_DLP_BIN` / `WHISPER_PYTHON_BIN` / `WHISPER_MODEL` 用于视频脚本提取和音频转录
+- [config/workspaces.json](/Users/a1-6/Documents/codex%20project/config/workspaces.json)
 
-`config/workspaces.json` 示例：
+当前默认工作区是：
 
-```json
-[
-  {
-    "name": "app",
-    "path": "/absolute/path/to/repo",
-    "defaultSandbox": "workspace-write",
-    "defaultModel": "",
-    "allowedAdditionalDirs": [],
-    "enabled": true,
-    "highRisk": false
-  }
-]
+```text
+/Users/a1-6/Documents/codex project
 ```
 
-字段说明：
+## 启动
 
-- `defaultSandbox`：`read-only` / `workspace-write` / `danger-full-access`
-- `highRisk`：`true` 时该 workspace 的任务默认需要审批
-- `allowedAdditionalDirs`：额外允许传给 `codex --add-dir` 的目录
-
-## 运行
+开发模式：
 
 ```bash
-npm install
+cd "/Users/a1-6/Documents/codex project"
 npm run dev
 ```
 
-如果想长期稳定运行，推荐直接装成 macOS `launchd` 服务：
+构建：
 
 ```bash
+npm run build
+```
+
+测试：
+
+```bash
+npm test
+```
+
+## Telegram 用法
+
+直接发文字：
+
+```text
+帮我看看当前项目结构
+```
+
+或者显式命令：
+
+```text
+/run 帮我检查当前仓库里最重要的入口文件
+```
+
+查看状态：
+
+```text
+/status
+```
+
+中止：
+
+```text
+/abort
+```
+
+查看最近任务：
+
+```text
+/history
+```
+
+查看帮助：
+
+```text
+/help
+```
+
+## 常驻运行
+
+安装 `launchd` 服务：
+
+```bash
+cd "/Users/a1-6/Documents/codex project"
 npm run service:install
 ```
 
@@ -107,161 +144,7 @@ npm run service:install
 npm run service:uninstall
 ```
 
-服务日志默认在：
+日志文件：
 
-```text
-logs/bridge.out.log
-logs/bridge.err.log
-```
-
-## 推荐聊天格式
-
-## 推荐部署方式：一个 Bot + 多个固定 Chat/Topic
-
-中期最推荐的用法不是把所有内容都塞进一个对话框，而是给同一个 bot 绑定多个固定窗口。
-
-两种都支持：
-
-- 多个独立 chat
-- 同一个 Telegram 超级群里的多个 forum topic
-
-系统内部会按 `chat -> scenario + workspace` 绑定；如果是 topic 消息，会按 `chat_id#topic_id` 单独建绑定，所以同一个群里的不同 topic 不会串上下文。
-
-推荐示例：
-
-- Topic A: `content_capture`
-- Topic B: `daily_todo`
-- Topic C: `ai_news`
-- 私聊: `generic`
-
-第一次进入某个固定 chat 或 topic 时，先做两件事：
-
-```text
-/use bridge
-/bindscenario content_capture
-```
-
-之后这个窗口就会记住自己的 workspace 和 scenario。
-
-`generic` 场景下，继续支持带标签的聊天格式：
-
-```text
-scenario: 修复登录页报错
-workspace: app
-```
-
-如果当前 chat 已经绑定 workspace，也可以直接发一句自然语言，系统会在当前 workspace 里执行。
-
-`content_capture` 场景下，直接发文本、链接或“文本 + 链接”即可。  
-`daily_todo` 场景下，直接发一段口语化计划，bot 会整理成结构化清单并追加到当天的 markdown。
-
-## Telegram 命令
-
-- `/run 修复当前仓库的 type error`
-- `/status`
-- `/abort`
-- `/workspaces`
-- `/use app`
-- `/scenario`
-- `/bindscenario content_capture`
-- `/bindscenario daily_todo`
-- `/bindscenario ai_news`
-- `/digest 3d`
-- `/schedule digest 09:00`
-- `/unschedule digest`
-- `/history`
-- `/help`
-
-## `content_capture` 场景
-
-切到这个场景后，bot 会把输入提炼成结构化内容，并落到 markdown：
-
-```text
-/bindscenario content_capture
-https://example.com/article 这篇内容值得沉淀，帮我提炼成可复用笔记
-```
-
-默认输出目录：
-
-```text
-<workspace>/vault/inbox/YYYY-MM-DD/
-```
-
-视频链接处理顺序：
-
-1. 先尝试抓字幕/脚本
-2. 如果没有字幕，再下载音频并用本地 Whisper 转文字
-3. 最后把完整中文脚本写进 markdown
-
-## `daily_todo` 场景
-
-切到这个场景后，直接发今天的想法、任务、担心遗漏的事，bot 会整理成结构化日计划并追加到当天文件：
-
-```text
-/bindscenario daily_todo
-今天最重要的是把脚本改完，下午处理消息，晚上留半小时复盘
-```
-
-默认输出目录：
-
-```text
-<workspace>/vault/todo-daily/YYYY-MM-DD.md
-```
-
-## `ai_news` 场景
-
-切到这个场景后，用 `/digest` 手动触发一次 AI 资讯整理：
-
-```text
-/bindscenario ai_news
-/digest
-/digest 3d
-```
-
-`/digest` 默认按最近 24 小时抓重点，`/digest 3d` 这种形式可以给一个更宽的时间范围提示。
-
-如果你想每天自动推送：
-
-```text
-/schedule digest 09:00
-```
-
-查看当前窗口的定时任务：
-
-```text
-/schedule
-```
-
-关闭自动推送：
-
-```text
-/unschedule digest
-```
-
-默认输出目录：
-
-```text
-<workspace>/vault/ai-news/YYYY-MM-DD.md
-```
-
-## 审批行为
-
-以下情况会要求 Telegram 二次确认：
-
-- workspace 被标记为 `highRisk`
-- workspace 默认 sandbox 是 `danger-full-access`
-- prompt 命中高危规则，比如大规模删除、系统级命令、凭据相关操作
-
-注意：这是“任务启动前审批”，不是运行中逐工具审批。
-
-## 测试
-
-```bash
-npm test
-```
-
-如果要跑真实 `codex exec` smoke test：
-
-```bash
-RUN_REAL_CODEX_SMOKE=1 npm test
-```
+- [logs/bridge.out.log](/Users/a1-6/Documents/codex%20project/logs/bridge.out.log)
+- [logs/bridge.err.log](/Users/a1-6/Documents/codex%20project/logs/bridge.err.log)

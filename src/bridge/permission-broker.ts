@@ -23,17 +23,17 @@ export class PermissionBroker {
       topicId: task.topicId,
       replyToMessageId,
       text: [
-        'Approval required before task execution.',
-        `Workspace: ${task.workspaceName}`,
-        `Sandbox: ${task.sandbox}`,
-        `Risk: ${riskSummary}`,
+        '任务执行前需要审批。',
+        `工作区：${task.workspaceName}`,
+        `沙箱：${task.sandbox}`,
+        `风险：${riskSummary}`,
         '',
         task.prompt,
       ].join('\n'),
       inlineButtons: [
         [
-          { text: 'Approve once', callbackData: `approval:approve:${approval.id}` },
-          { text: 'Deny', callbackData: `approval:deny:${approval.id}` },
+          { text: '批准一次', callbackData: `approval:approve:${approval.id}` },
+          { text: '拒绝', callbackData: `approval:deny:${approval.id}` },
         ],
       ],
     });

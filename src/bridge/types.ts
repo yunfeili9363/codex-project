@@ -2,9 +2,8 @@ export type ChannelType = 'telegram';
 
 export type SandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access';
 export type ApprovalMode = 'untrusted' | 'on-request' | 'never';
-export type ScenarioType = 'generic' | 'content_capture' | 'daily_todo' | 'ai_news';
+export type ScenarioType = 'generic';
 export type InputKind = 'text' | 'url' | 'mixed' | 'command' | 'voice';
-export type CaptureSourceType = 'text' | 'url' | 'mixed' | 'video';
 
 export interface WorkspaceDefinition {
   name: string;
@@ -87,19 +86,6 @@ export interface ApprovalRequestRecord {
   resolvedBy: string | null;
 }
 
-export interface ContentItemRecord {
-  id: string;
-  taskRunId: string;
-  scenario: ScenarioType;
-  title: string;
-  sourceType: CaptureSourceType;
-  sourceUrl: string | null;
-  summary: string;
-  tags: string[];
-  filePath: string;
-  createdAt: string;
-}
-
 export interface AuditEventRecord {
   id: string;
   chatId: string;
@@ -157,50 +143,4 @@ export interface CommandContext {
   inbound: InboundMessage;
   binding: ChatBindingRecord;
   workspace: WorkspaceRecord;
-}
-
-export interface ContentCaptureResult {
-  title: string;
-  source_type: CaptureSourceType;
-  source_url: string | null;
-  summary: string;
-  core_points: string[];
-  tags: string[];
-  content_angles: string[];
-  quick_card_markdown: string;
-  reusable_note_markdown: string;
-  suggested_path: string;
-}
-
-export interface DailyTodoResult {
-  todo_text: string;
-  source_mode: 'text' | 'voice';
-  normalized_markdown_line: string;
-}
-
-export interface AiNewsResult {
-  items: Array<{
-    title: string;
-    summary: string;
-    why_it_matters: string;
-    content_angle: string;
-    source_url: string;
-  }>;
-  daily_digest_markdown: string;
-}
-
-export interface ScheduledJobRecord {
-  id: string;
-  chatId: string;
-  targetChatId: string;
-  topicId: number | null;
-  channelType: ChannelType;
-  scenario: ScenarioType;
-  jobType: 'digest';
-  scheduleTime: string;
-  enabled: boolean;
-  lastRunAt: string | null;
-  nextRunAt: string;
-  createdAt: string;
-  updatedAt: string;
 }

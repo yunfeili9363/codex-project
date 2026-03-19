@@ -10,26 +10,6 @@ export function inboxFilePath(vaultRoot: string, date: Date, title: string): str
   return path.join(vaultRoot, 'inbox', dateSegment, `${slug}.md`);
 }
 
-export function sourceCaptureFilePath(
-  vaultRoot: string,
-  date: Date,
-  kind: 'video' | 'x' | 'web',
-  title: string,
-): string {
-  const dateSegment = date.toISOString().slice(0, 10);
-  const slug = slugify(title || 'capture');
-  return path.join(vaultRoot, 'sources', kind, dateSegment, `${slug}.md`);
-}
-
-export function dailyTodoFilePath(vaultRoot: string): string {
-  return path.join(vaultRoot, 'todo-list.md');
-}
-
-export function aiNewsFilePath(vaultRoot: string, date: Date): string {
-  const dateSegment = date.toISOString().slice(0, 10);
-  return path.join(vaultRoot, 'ai-news', `${dateSegment}.md`);
-}
-
 export function displayPath(workspacePath: string, filePath: string): string {
   const relative = path.relative(workspacePath, filePath).replace(/\\/g, '/');
   if (!relative || relative.startsWith('..')) {

@@ -1,5 +1,4 @@
 import crypto from 'node:crypto';
-import { fileURLToPath } from 'node:url';
 import type {
   ChannelAdapter,
   Executor,
@@ -9,15 +8,13 @@ import type {
 import type {
   ChatBindingRecord,
   InboundMessage,
-  ScheduledJobRecord,
   TaskRunRecord,
   WorkspaceRecord,
 } from './types.js';
 import { DeliveryLayer } from './delivery.js';
 import { PermissionBroker } from './permission-broker.js';
 import { SessionRouter } from './router.js';
-import { ScenarioRouter } from '../scenarios/router.js';
-import { GenericScenarioHandler, parseLabeledTaskRequest } from '../scenarios/generic.js';
+import { GenericScenarioHandler } from '../scenarios/generic.js';
 import type { ScenarioTaskPlan } from '../scenarios/types.js';
 
 interface ActiveTaskState {
@@ -27,7 +24,6 @@ interface ActiveTaskState {
   startedAt: number;
   lastEditAt: number;
   heartbeat?: ReturnType<typeof setInterval>;
-  taskScenario: TaskRunRecord['scenario'];
   abort(): void;
 }
 
@@ -35,10 +31,9 @@ export class BridgeManager {
   private readonly delivery: DeliveryLayer;
   private readonly permissionBroker: PermissionBroker;
   private readonly router: SessionRouter;
-  private readonly scenarioRouter: ScenarioRouter;
+  private readonly genericHandler: GenericScenarioHandler;
   private readonly chatLocks = new Map<string, Promise<void>>();
   private readonly activeTasks = new Map<string, ActiveTaskState>();
-  private schedulerTimer?: ReturnType<typeof setInterval>;
   private stopping = false;
 
   constructor(
@@ -52,27 +47,16 @@ export class BridgeManager {
     this.delivery = new DeliveryLayer(adapter, store);
     this.permissionBroker = new PermissionBroker(store, adapter);
     this.router = new SessionRouter(store);
-    this.scenarioRouter = new ScenarioRouter();
+    this.genericHandler = new GenericScenarioHandler();
   }
 
   async start(): Promise<void> {
     this.stopping = false;
-    this.schedulerTimer = setInterval(() => {
-      void this.runDueScheduledJobs().catch(error => {
-        console.error('[bridge-manager] scheduled job tick failed:', error);
-      });
-    }, 30_000);
-    await this.runDueScheduledJobs();
     await this.adapter.start(message => this.handleInbound(message));
   }
 
   async stop(): Promise<void> {
     this.stopping = true;
-    if (this.schedulerTimer) {
-      clearInterval(this.schedulerTimer);
-      this.schedulerTimer = undefined;
-    }
-
     for (const active of this.activeTasks.values()) {
       if (active.heartbeat) {
         clearInterval(active.heartbeat);
@@ -91,17 +75,6 @@ export class BridgeManager {
     const deadline = Date.now() + 2_000;
     while (this.activeTasks.size > 0 && Date.now() < deadline) {
       await sleep(100);
-    }
-  }
-
-  async runDueScheduledJobs(now: Date = new Date()): Promise<void> {
-    if (this.stopping) return;
-    const runAt = now.toISOString();
-    const jobs = this.store.listDueScheduledJobs(runAt);
-    for (const job of jobs) {
-      const nextRunAt = computeNextRunAt(job.scheduleTime, new Date(now.getTime() + 60_000));
-      this.store.markScheduledJobRun(job.id, runAt, nextRunAt);
-      await this.runScheduledJob(job);
     }
   }
 
@@ -164,20 +137,10 @@ export class BridgeManager {
     let normalizedMessage = message;
 
     if (!normalizedMessage.text?.trim() && normalizedMessage.voiceNote) {
-      if (binding.scenario !== 'daily_todo') {
-        await this.reply(
-          message.chatId,
-          message.topicId,
-          '当前只有 daily_todo 场景支持直接发送语音待办。先切到 /bindscenario daily_todo 再试。',
-          message.messageId,
-        );
-        return;
-      }
-
       await this.reply(
         message.chatId,
         message.topicId,
-        '已收到语音，正在转写并整理待办。',
+        '已收到语音，正在转写。',
         message.messageId,
       );
 
@@ -200,66 +163,9 @@ export class BridgeManager {
     }
 
     const text = normalizedMessage.text?.trim() || '';
-    const shortcut = parseScenarioShortcut(text);
-    const autoScenario = !shortcut && binding.scenario === 'generic' ? inferAutoScenario(text) : null;
-    const effectiveScenario = shortcut?.scenario ?? autoScenario ?? binding.scenario;
-    const effectiveMessage: InboundMessage = shortcut
-      ? { ...normalizedMessage, text: shortcut.text }
-      : normalizedMessage;
 
     if (text === '/help' || text === '/start') {
       await this.reply(message.chatId, message.topicId, helpText(), message.messageId);
-      return;
-    }
-
-    if (text === '/scenario') {
-        await this.reply(
-          message.chatId,
-          message.topicId,
-          `当前场景：${binding.scenario}\n当前工作区：${binding.workspaceName}`,
-          message.messageId,
-        );
-        return;
-      }
-
-    if (text.startsWith('/bindscenario ')) {
-      const scenario = text.slice('/bindscenario '.length).trim() as ChatBindingRecord['scenario'];
-      if (!this.scenarioRouter.getScenarioNames().includes(scenario)) {
-        await this.reply(
-          message.chatId,
-          message.topicId,
-          `未知场景：${scenario}\n可用场景：${this.scenarioRouter.getScenarioNames().join(', ')}`,
-          message.messageId,
-        );
-        return;
-      }
-
-      const updated = this.router.setScenario(message.bindingKey, message.channelType, scenario);
-      await this.reply(
-        message.chatId,
-        message.topicId,
-        `已切换场景：${updated.scenario}\n工作区：${updated.workspaceName}`,
-        message.messageId,
-      );
-      return;
-    }
-
-    if (text === '/workspaces') {
-      const all = this.store.listEnabledWorkspaces();
-      const lines = all.map(item => `${item.name === binding.workspaceName ? '* ' : '- '}${item.name} -> ${item.path}`);
-      await this.reply(message.chatId, message.topicId, ['可用工作区：', ...lines].join('\n'), message.messageId);
-      return;
-    }
-
-    if (text.startsWith('/use ')) {
-      const targetName = text.slice(5).trim();
-      const nextWorkspace = this.store.getWorkspace(targetName);
-      if (!nextWorkspace || !nextWorkspace.enabled) {
-        await this.reply(message.chatId, message.topicId, `未知工作区：${targetName}`, message.messageId);
-        return;
-      }
-      const updated = this.router.setWorkspace(message.bindingKey, message.channelType, targetName);
-      await this.reply(message.chatId, message.topicId, `已切换工作区：${updated.workspaceName}`, message.messageId);
       return;
     }
 
@@ -268,81 +174,14 @@ export class BridgeManager {
       return;
     }
 
-    if (binding.scenario === 'daily_todo' && isTodoListQuery(text)) {
-      const handler = this.scenarioRouter.getHandler('daily_todo');
-      if (handler?.renderList) {
-        const completion = await handler.renderList({
-          workspace,
-          bindingVaultRoot: binding.vaultRoot,
-        });
-        await this.reply(message.chatId, message.topicId, completion.userMessage, message.messageId);
-        return;
-      }
-    }
-
     if (text === '/history') {
       const history = this.store.listTaskRunsByChat(message.bindingKey, 5);
       if (history.length === 0) {
         await this.reply(message.chatId, message.topicId, '还没有任务记录。', message.messageId);
         return;
       }
-      const lines = history.map(item => `- ${item.status} [${item.workspaceName}] ${truncate(item.prompt, 70)}`);
+      const lines = history.map(item => `- ${item.status} ${truncate(item.prompt, 80)}`);
       await this.reply(message.chatId, message.topicId, ['最近任务：', ...lines].join('\n'), message.messageId);
-      return;
-    }
-
-    if (text === '/schedule') {
-      const jobs = this.store.listScheduledJobsByChat(message.bindingKey).filter(item => item.enabled);
-      if (jobs.length === 0) {
-        await this.reply(message.chatId, message.topicId, '这个窗口还没有启用定时任务。', message.messageId);
-        return;
-      }
-      const lines = jobs.map(item => `- ${item.jobType} · 每天 ${item.scheduleTime} · 下次 ${formatLocalDateTime(item.nextRunAt)}`);
-      await this.reply(message.chatId, message.topicId, ['当前定时任务：', ...lines].join('\n'), message.messageId);
-      return;
-    }
-
-    if (text.startsWith('/schedule ')) {
-      if (binding.scenario !== 'ai_news') {
-        await this.reply(message.chatId, message.topicId, '先用 /bindscenario ai_news 把这个窗口切到 ai_news。', message.messageId);
-        return;
-      }
-      const schedule = parseDigestSchedule(text);
-      if (!schedule) {
-        await this.reply(message.chatId, message.topicId, '用法：/schedule digest HH:MM', message.messageId);
-        return;
-      }
-
-      const nextRunAt = computeNextRunAt(schedule.time, new Date());
-      const job = this.store.upsertScheduledJob({
-        id: crypto.randomUUID(),
-        chatId: message.bindingKey,
-        targetChatId: message.chatId,
-        topicId: message.topicId,
-        channelType: message.channelType,
-        scenario: 'ai_news',
-        jobType: 'digest',
-        scheduleTime: schedule.time,
-        enabled: true,
-        lastRunAt: null,
-        nextRunAt,
-      });
-      await this.reply(
-        message.chatId,
-        message.topicId,
-        `已设置 AI 日报定时任务：每天 ${job.scheduleTime}\n下次运行：${formatLocalDateTime(job.nextRunAt)}`,
-        message.messageId,
-      );
-      return;
-    }
-
-    if (text === '/unschedule' || text === '/unschedule digest') {
-      const job = this.store.disableScheduledJob(message.bindingKey, 'ai_news', 'digest');
-      if (!job) {
-        await this.reply(message.chatId, message.topicId, '这个窗口没有 AI 日报定时任务。', message.messageId);
-        return;
-      }
-      await this.reply(message.chatId, message.topicId, '已关闭这个窗口的 AI 日报定时任务。', message.messageId);
       return;
     }
 
@@ -357,33 +196,17 @@ export class BridgeManager {
       return;
     }
 
+    if (text.startsWith('/') && !text.startsWith('/run ')) {
+      await this.reply(message.chatId, message.topicId, usageText(), message.messageId);
+      return;
+    }
+
     if (this.activeTasks.has(message.bindingKey)) {
-      await this.reply(message.chatId, message.topicId, '这个窗口已有任务在运行。可用 /status 查看，或用 /abort 中止。', message.messageId);
+      await this.reply(message.chatId, message.topicId, '这个对话已有任务在运行。可用 /status 查看，或用 /abort 中止。', message.messageId);
       return;
     }
 
-    const parsed = parseTaskRequest(effectiveMessage.text?.trim() || '', workspace.name);
-    const requestedWorkspaceName = parsed?.workspaceName || workspace.name;
-    const targetWorkspace = this.store.getWorkspace(requestedWorkspaceName);
-    if (!targetWorkspace || !targetWorkspace.enabled) {
-      await this.reply(message.chatId, message.topicId, `未知工作区：${requestedWorkspaceName}`, message.messageId);
-      return;
-    }
-
-    if (binding.workspaceName !== requestedWorkspaceName) {
-      this.router.setWorkspace(message.bindingKey, message.channelType, requestedWorkspaceName);
-    }
-
-    if (shouldSendPreparationAck(effectiveScenario, effectiveMessage.text || '')) {
-      await this.reply(
-        message.chatId,
-        message.topicId,
-        '已收到链接，正在提取正文或脚本。这一步可能需要一点时间。',
-        message.messageId,
-      );
-    }
-
-    const taskPlan = await this.buildScenarioTaskPlan(effectiveScenario, effectiveMessage, targetWorkspace);
+    const taskPlan = await this.buildTaskPlan(normalizedMessage, workspace);
     if (!taskPlan) {
       await this.reply(message.chatId, message.topicId, usageText(), message.messageId);
       return;
@@ -394,24 +217,24 @@ export class BridgeManager {
       chatId: message.bindingKey,
       targetChatId: message.chatId,
       topicId: message.topicId,
-      scenario: taskPlan.scenario,
-      workspaceName: targetWorkspace.name,
+      scenario: 'generic',
+      workspaceName: workspace.name,
       threadId: binding.currentThreadId,
       inputKind: taskPlan.inputKind,
-      sourceUrl: taskPlan.sourceUrl,
+      sourceUrl: null,
       outputPath: null,
       prompt: taskPlan.prompt,
       status: 'queued',
       riskFlags: [],
       approvalStatus: 'not_required',
-      sandbox: targetWorkspace.defaultSandbox,
-      model: targetWorkspace.defaultModel,
+      sandbox: workspace.defaultSandbox,
+      model: workspace.defaultModel,
       finalMessage: null,
       errorText: null,
     });
 
     this.store.updateChatCurrentTask(message.bindingKey, message.channelType, task.id);
-    const risk = this.riskEvaluator.evaluate(task, targetWorkspace);
+    const risk = this.riskEvaluator.evaluate(task, workspace);
     const updatedTask = this.store.updateTaskRun(task.id, {
       status: risk.requiresApproval ? 'pending_approval' : 'queued',
       approvalStatus: risk.requiresApproval ? 'pending' : 'not_required',
@@ -424,7 +247,7 @@ export class BridgeManager {
       return;
     }
 
-    await this.startTask(updatedTask, taskPlan, binding.vaultRoot);
+    await this.startTask(updatedTask, taskPlan);
   }
 
   private async handleCallback(message: InboundMessage): Promise<void> {
@@ -432,7 +255,7 @@ export class BridgeManager {
     const match = /^approval:(approve|deny):(.+)$/.exec(data);
     if (!match) {
       if (message.callbackQueryId) {
-        await this.adapter.answerCallbackQuery(message.callbackQueryId, '不支持的操作');
+        await this.adapter.answerCallbackQuery(message.callbackQueryId, '不支持这个操作');
       }
       return;
     }
@@ -441,7 +264,7 @@ export class BridgeManager {
     const approval = this.store.getApprovalRequest(approvalId);
     if (!approval || approval.chatId !== message.bindingKey) {
       if (message.callbackQueryId) {
-        await this.adapter.answerCallbackQuery(message.callbackQueryId, '未找到审批记录');
+        await this.adapter.answerCallbackQuery(message.callbackQueryId, '没找到这条审批记录');
       }
       return;
     }
@@ -453,7 +276,7 @@ export class BridgeManager {
     );
     if (!resolved) {
       if (message.callbackQueryId) {
-        await this.adapter.answerCallbackQuery(message.callbackQueryId, '已经处理过了');
+        await this.adapter.answerCallbackQuery(message.callbackQueryId, '这条审批已经处理过了');
       }
       return;
     }
@@ -461,7 +284,7 @@ export class BridgeManager {
     const task = this.store.getTaskRun(resolved.taskRunId);
     if (!task) {
       if (message.callbackQueryId) {
-        await this.adapter.answerCallbackQuery(message.callbackQueryId, '未找到任务');
+        await this.adapter.answerCallbackQuery(message.callbackQueryId, '没找到对应任务');
       }
       return;
     }
@@ -474,7 +297,7 @@ export class BridgeManager {
         errorText: 'Denied via Telegram approval',
       });
       if (message.callbackQueryId) {
-        await this.adapter.answerCallbackQuery(message.callbackQueryId, 'Denied');
+        await this.adapter.answerCallbackQuery(message.callbackQueryId, '已拒绝');
       }
       await this.reply(message.chatId, message.topicId, '任务已拒绝。', message.messageId);
       return;
@@ -492,11 +315,17 @@ export class BridgeManager {
     await this.reply(message.chatId, message.topicId, '已批准，开始执行。', message.messageId);
     const binding = this.router.resolve(message.bindingKey, 'telegram', message.chatId, message.topicId);
     const workspace = this.resolveWorkspace(binding);
-    const taskPlan = await this.buildScenarioTaskPlanFromTask(queuedTask, workspace);
-    await this.startTask(queuedTask, taskPlan, binding.vaultRoot);
+    const taskPlan: ScenarioTaskPlan = {
+      scenario: 'generic',
+      inputKind: queuedTask.inputKind,
+      sourceUrl: null,
+      prompt: queuedTask.prompt,
+      completionMode: 'generic',
+    };
+    await this.startTask(queuedTask, taskPlan);
   }
 
-  private async startTask(task: TaskRunRecord, taskPlan: ScenarioTaskPlan, bindingVaultRoot: string | null): Promise<void> {
+  private async startTask(task: TaskRunRecord, taskPlan: ScenarioTaskPlan): Promise<void> {
     if (this.activeTasks.has(task.chatId)) {
       throw new Error(`Task already running for chat ${task.chatId}`);
     }
@@ -514,7 +343,7 @@ export class BridgeManager {
       topicId: task.topicId,
       text: taskPlan.prefaceText
         ? `${taskPlan.prefaceText}\n工作区：${workspace.name}`
-        : `正在执行\n工作区：${workspace.name}\n${truncate(task.prompt, 240)}`,
+        : `正在执行\n工作区：${workspace.name}`,
     }, { taskRunId: task.id, kind: 'task_status' });
 
     const handle = this.executor.runTask(runningTask, workspace, {
@@ -539,7 +368,7 @@ export class BridgeManager {
           });
         }
       },
-    }, taskPlan.executionOptions);
+    });
 
     const activeState: ActiveTaskState = {
       taskId: task.id,
@@ -547,7 +376,6 @@ export class BridgeManager {
       lastSummary: '任务已开始',
       startedAt: Date.now(),
       lastEditAt: Date.now(),
-      taskScenario: task.scenario,
       abort: () => handle.abort(),
     };
 
@@ -569,23 +397,13 @@ export class BridgeManager {
 
     try {
       const result = await handle.done;
-      const completion = await this.completeScenarioTask(task, workspace, bindingVaultRoot, result.finalMessage);
       this.store.updateTaskRun(task.id, {
         status: 'succeeded',
         finishedAt: new Date().toISOString(),
-        finalMessage: completion.finalMessageForTask ?? result.finalMessage,
+        finalMessage: result.finalMessage,
         errorText: null,
-        outputPath: completion.outputPath ?? task.outputPath,
         threadId: result.threadId ?? runningTask.threadId,
       });
-
-      if (completion.contentItem) {
-        this.store.createContentItem({
-          ...completion.contentItem,
-          id: crypto.randomUUID(),
-          taskRunId: task.id,
-        });
-      }
 
       if (result.threadId) {
         this.store.updateChatCurrentThread(task.chatId, 'telegram', result.threadId);
@@ -598,7 +416,7 @@ export class BridgeManager {
         });
       }
 
-      await this.reply(task.targetChatId, task.topicId, completion.userMessage);
+      await this.reply(task.targetChatId, task.topicId, result.finalMessage);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const status = /aborted by user/i.test(message) ? 'aborted' : 'failed';
@@ -634,183 +452,8 @@ export class BridgeManager {
     }
   }
 
-  private async runScheduledJob(job: ScheduledJobRecord): Promise<void> {
-    if (job.scenario !== 'ai_news' || job.jobType !== 'digest') {
-      return;
-    }
-
-    if (this.activeTasks.has(job.chatId)) {
-      await this.reply(job.targetChatId, job.topicId, '本次定时日报已跳过：当前还有其他任务在运行。');
-      return;
-    }
-
-    const binding = this.router.resolve(job.chatId, job.channelType, job.targetChatId, job.topicId);
-    if (binding.scenario !== 'ai_news') {
-      await this.reply(
-        job.targetChatId,
-        job.topicId,
-        `本次定时日报已跳过：当前窗口场景已切换为 ${binding.scenario}。`,
-      );
-      return;
-    }
-
-    const workspace = this.resolveWorkspace(binding);
-    const syntheticMessage: InboundMessage = {
-      channelType: job.channelType,
-      kind: 'message',
-      chatId: job.targetChatId,
-      bindingKey: job.chatId,
-      topicId: job.topicId,
-      text: '/digest',
-    };
-    const taskPlan = await this.buildScenarioTaskPlan('ai_news', syntheticMessage, workspace);
-    if (!taskPlan) {
-      return;
-    }
-
-    const task = this.store.createTaskRun({
-      id: crypto.randomUUID(),
-      chatId: job.chatId,
-      targetChatId: job.targetChatId,
-      topicId: job.topicId,
-      scenario: taskPlan.scenario,
-      workspaceName: workspace.name,
-      threadId: binding.currentThreadId,
-      inputKind: taskPlan.inputKind,
-      sourceUrl: taskPlan.sourceUrl,
-      outputPath: null,
-      prompt: taskPlan.prompt,
-      status: 'queued',
-      riskFlags: [],
-      approvalStatus: 'not_required',
-      sandbox: workspace.defaultSandbox,
-      model: workspace.defaultModel,
-      finalMessage: null,
-      errorText: null,
-    });
-
-    this.store.insertAuditEvent({
-      chatId: job.chatId,
-      taskRunId: task.id,
-      direction: 'system',
-      kind: 'scheduled_digest',
-      payload: `ai_news digest at ${job.scheduleTime}`,
-    });
-    this.store.updateChatCurrentTask(job.chatId, job.channelType, task.id);
-
-    const risk = this.riskEvaluator.evaluate(task, workspace);
-    if (risk.requiresApproval) {
-      await this.reply(
-        job.targetChatId,
-        job.topicId,
-        `本次定时日报已跳过：需要审批。\n${risk.summary}`,
-      );
-      this.store.updateTaskRun(task.id, {
-        status: 'denied',
-        approvalStatus: 'denied',
-        finishedAt: new Date().toISOString(),
-        errorText: `Skipped scheduled job: ${risk.summary}`,
-        riskFlags: risk.flags,
-      });
-      return;
-    }
-
-    await this.startTask(task, taskPlan, binding.vaultRoot);
-  }
-
-  private async buildScenarioTaskPlan(
-    scenario: ChatBindingRecord['scenario'],
-    message: InboundMessage,
-    workspace: WorkspaceRecord,
-  ): Promise<ScenarioTaskPlan | null> {
-    if (scenario === 'generic') {
-      const generic = new GenericScenarioHandler();
-      return generic.buildTaskPlan(message, workspace);
-    }
-
-    const plan = await this.scenarioRouter.buildTaskPlan(scenario, message, workspace);
-    if (plan) return plan;
-
-    return null;
-  }
-
-  private async buildScenarioTaskPlanFromTask(task: TaskRunRecord, workspace: WorkspaceRecord): Promise<ScenarioTaskPlan> {
-    if (task.scenario === 'content_capture') {
-      return {
-        scenario: task.scenario,
-        inputKind: task.inputKind,
-        sourceUrl: task.sourceUrl,
-        prompt: task.prompt,
-        executionOptions: this.scenarioRouter.getHandler('content_capture') ? { outputSchemaPath: getContentCaptureSchemaPath() } : undefined,
-        prefaceText: task.sourceUrl ? `正在沉淀内容，来源：${task.sourceUrl}` : '正在把内容沉淀到知识库',
-        completionMode: 'content_capture',
-      };
-    }
-
-    if (task.scenario === 'daily_todo') {
-      return {
-        scenario: task.scenario,
-        inputKind: task.inputKind,
-        sourceUrl: task.sourceUrl,
-        prompt: task.prompt,
-        executionOptions: this.scenarioRouter.getHandler('daily_todo') ? { outputSchemaPath: getDailyTodoSchemaPath() } : undefined,
-        prefaceText: '正在整理今天的计划',
-        completionMode: 'daily_todo',
-      };
-    }
-
-    if (task.scenario === 'ai_news') {
-      return {
-        scenario: task.scenario,
-        inputKind: task.inputKind,
-        sourceUrl: task.sourceUrl,
-        prompt: task.prompt,
-        executionOptions: this.scenarioRouter.getHandler('ai_news') ? { outputSchemaPath: getAiNewsSchemaPath() } : undefined,
-        prefaceText: '正在整理 AI 中文日报',
-        completionMode: 'ai_news',
-      };
-    }
-
-    return {
-      scenario: task.scenario,
-      inputKind: task.inputKind,
-      sourceUrl: task.sourceUrl,
-      prompt: task.prompt,
-      completionMode: 'generic',
-    };
-  }
-
-  private async completeScenarioTask(
-    task: TaskRunRecord,
-    workspace: WorkspaceRecord,
-    bindingVaultRoot: string | null,
-    finalMessage: string,
-  ): Promise<{
-    userMessage: string;
-    outputPath?: string;
-    contentItem?: {
-      taskRunId: string;
-      scenario: TaskRunRecord['scenario'];
-      title: string;
-      sourceType: import('./types.js').ContentItemRecord['sourceType'];
-      sourceUrl: string | null;
-      summary: string;
-      tags: string[];
-      filePath: string;
-    };
-    finalMessageForTask?: string;
-  }> {
-    const handler = this.scenarioRouter.getHandler(task.scenario);
-    if (!handler?.complete) {
-      return { userMessage: finalMessage, finalMessageForTask: finalMessage };
-    }
-
-    return handler.complete({
-      finalMessage,
-      workspace,
-      bindingVaultRoot,
-      sourceUrl: task.sourceUrl,
-    });
+  private async buildTaskPlan(message: InboundMessage, workspace: WorkspaceRecord): Promise<ScenarioTaskPlan | null> {
+    return this.genericHandler.buildTaskPlan(message, workspace);
   }
 
   private resolveWorkspace(binding: ChatBindingRecord): WorkspaceRecord {
@@ -821,7 +464,7 @@ export class BridgeManager {
     if (!fallback) {
       throw new Error('No enabled workspaces configured');
     }
-    return this.router.setWorkspace(binding.chatId, binding.channelType, fallback.name) && fallback;
+    return fallback;
   }
 
   private renderStatus(chatId: string, workspaceName: string): string {
@@ -853,176 +496,32 @@ export class BridgeManager {
 function helpText(): string {
   return [
     '可用命令：',
-    '/run <内容>             在当前工作区执行任务',
-    '/待办 <内容>            直接按 daily_todo 方式追加一条待办',
-    '/收集 <内容或链接>      直接按 content_capture 方式沉淀',
-    '/日报 [范围]            直接生成 AI 中文日报',
-    '/digest [范围]          在 ai_news 场景里手动生成中文日报',
-    '/schedule               查看这个窗口的定时任务',
-    '/schedule digest HH:MM  设置 ai_news 每天定时中文日报',
-    '/unschedule digest      关闭 ai_news 定时中文日报',
-    '/status                 查看当前或最近任务',
-    '/abort                  中止当前任务',
-    '/workspaces             查看可用工作区',
-    '/use <name>             切换当前工作区',
-    '/scenario               查看当前场景',
-    '/bindscenario <name>    绑定当前窗口场景',
-    '/history                查看最近任务',
-    '/help                   查看帮助',
+    '/run <内容>      发送明确任务',
+    '/status          查看当前或最近任务',
+    '/abort           中止当前任务',
+    '/history         查看最近任务',
+    '/help            查看帮助',
     '',
-    '可用场景：',
-    'generic, content_capture, daily_todo, ai_news',
+    '也可以直接发送文字或语音，机器人会把转写后的内容当成普通请求处理。',
   ].join('\n');
 }
 
 function usageText(): string {
   return [
-    '当前输入没有匹配到可执行格式。',
+    '当前只保留一个通用机器人入口。',
     '',
-    'generic 场景：',
-    '直接发任务内容，或用 /run <内容>',
-    '',
-    '快捷入口：',
-    '/待办 <内容>、/收集 <内容或链接>、/日报 [范围]',
-    '',
-    'content_capture 场景：',
-    '直接发送文本、链接，或文本 + 链接',
-    '',
-    'daily_todo 场景：',
-    '直接发送一条待办，或直接发语音；每次只追加一条，不做拆分',
-    '',
-    'ai_news 场景：',
-    '使用 /digest 或 /digest 3d',
-    '定时日报可用 /schedule digest 09:00',
+    '直接发送任务内容，或使用 /run <内容>。',
+    '可用辅助命令：/status、/abort、/history、/help',
   ].join('\n');
 }
 
-function parseTaskRequest(text: string, currentWorkspaceName: string): { prompt: string; workspaceName: string } | null {
-  if (!text) return null;
-
-  if (text.startsWith('/run ')) {
-    const prompt = text.slice(5).trim();
-    return prompt ? { prompt, workspaceName: currentWorkspaceName } : null;
-  }
-
-  if (text.startsWith('/')) {
-    return null;
-  }
-
-  const labeled = parseLabeledTaskRequest(text);
-  if (labeled) {
-    return labeled;
-  }
-
-  return { prompt: text.trim(), workspaceName: currentWorkspaceName };
+function truncate(text: string, length: number): string {
+  if (text.length <= length) return text;
+  return `${text.slice(0, length - 3)}...`;
 }
 
-function parseScenarioShortcut(text: string): { scenario: ChatBindingRecord['scenario']; text: string } | null {
-  const trimmed = text.trim();
-  if (!trimmed) return null;
-
-  const todoMatch = /^\/待办(?:\s+([\s\S]+))?$/u.exec(trimmed);
-  if (todoMatch) {
-    return {
-      scenario: 'daily_todo',
-      text: todoMatch[1]?.trim() || '',
-    };
-  }
-
-  const captureMatch = /^\/收集(?:\s+([\s\S]+))?$/u.exec(trimmed);
-  if (captureMatch) {
-    return {
-      scenario: 'content_capture',
-      text: captureMatch[1]?.trim() || '',
-    };
-  }
-
-  const digestMatch = /^\/日报(?:\s+([\s\S]+))?$/u.exec(trimmed);
-  if (digestMatch) {
-    return {
-      scenario: 'ai_news',
-      text: `/digest ${digestMatch[1]?.trim() || ''}`.trim(),
-    };
-  }
-
-  return null;
-}
-
-function inferAutoScenario(text: string): ChatBindingRecord['scenario'] | null {
-  const trimmed = text.trim();
-  if (!trimmed || trimmed.startsWith('/')) return null;
-  const urls = trimmed.match(/https?:\/\/[^\s]+/g) || [];
-  if (urls.length === 0) return null;
-
-  const firstUrl = urls[0];
-  if (!firstUrl) return null;
-
-  try {
-    const host = new URL(firstUrl).hostname.replace(/^www\./, '').toLowerCase();
-    if (
-      host === 'youtube.com'
-      || host === 'm.youtube.com'
-      || host === 'youtu.be'
-      || host === 'x.com'
-      || host === 'twitter.com'
-      || host === 'vimeo.com'
-      || host === 'bilibili.com'
-      || host === 'substack.com'
-    ) {
-      return 'content_capture';
-    }
-  } catch {}
-
-  return 'content_capture';
-}
-
-function shouldSendPreparationAck(
-  scenario: ChatBindingRecord['scenario'],
-  text: string,
-): boolean {
-  if (scenario !== 'content_capture') return false;
-  const trimmed = text.trim();
-  if (!trimmed || trimmed.startsWith('/')) return false;
-  return /https?:\/\/[^\s]+/i.test(trimmed);
-}
-
-function isTodoListQuery(text: string): boolean {
-  const normalized = text.trim().replace(/\s+/g, '');
-  if (!normalized) return false;
-  return [
-    '列出来当前的待办清单',
-    '列出来当前待办清单',
-    '列出当前的待办清单',
-    '列出当前待办清单',
-    '查看当前待办清单',
-    '显示当前待办清单',
-    '查看待办清单',
-    '显示待办清单',
-    '列出待办',
-    '查看待办',
-    '显示待办',
-    '当前待办',
-    '待办清单',
-  ].includes(normalized);
-}
-
-function parseDigestSchedule(text: string): { time: string } | null {
-  const match = /^\/schedule\s+digest\s+(\d{2}:\d{2})$/i.exec(text.trim());
-  if (!match) return null;
-  const time = match[1];
-  if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(time)) return null;
-  return { time };
-}
-
-function computeNextRunAt(time: string, from: Date): string {
-  const [hours, minutes] = time.split(':').map(Number);
-  const next = new Date(from);
-  next.setSeconds(0, 0);
-  next.setHours(hours, minutes, 0, 0);
-  if (next <= from) {
-    next.setDate(next.getDate() + 1);
-  }
-  return next.toISOString();
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 function formatLocalDateTime(value: string): string {
@@ -1035,25 +534,4 @@ function formatLocalDateTime(value: string): string {
     minute: '2-digit',
     hour12: false,
   }).format(date);
-}
-
-function truncate(text: string, length: number): string {
-  if (text.length <= length) return text;
-  return `${text.slice(0, length - 3)}...`;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-function getContentCaptureSchemaPath(): string {
-  return fileURLToPath(new URL('../../config/schemas/content-capture.schema.json', import.meta.url));
-}
-
-function getDailyTodoSchemaPath(): string {
-  return fileURLToPath(new URL('../../config/schemas/daily-todo.schema.json', import.meta.url));
-}
-
-function getAiNewsSchemaPath(): string {
-  return fileURLToPath(new URL('../../config/schemas/ai-news.schema.json', import.meta.url));
 }
